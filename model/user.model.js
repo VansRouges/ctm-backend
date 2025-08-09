@@ -34,7 +34,7 @@ const userSchema = new mongoose.Schema({
   role: {
     type: String,
     default: 'user',
-    enum: ['user', 'admin', 'moderator'] // Add role restrictions if needed
+    enum: ['user', 'admin'] // Add role restrictions if needed
   },
   kycStatus: {
     type: Boolean,
