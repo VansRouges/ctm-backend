@@ -2,25 +2,50 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import requestLogger from './middlewares/logger.middleware.js'
 import { notFoundHandler, errorHandler } from './middlewares/error.middleware.js'
-
 import { PORT } from './config/env.js';
 import connectToDatabase from './database/mongodb.js';
 import userRouter from './routes/user.route.js';
-import { requireAuthNonStrict, requireAuthStrict } from './middlewares/auth.middleware.js';
+import stockRouter from './routes/stock.route.js';
+import cryptoOptionRouter from './routes/crypto-option.route.js';
+import copyTradingOptionRouter from './routes/copytrading-option.route.js';
+import StockUpdater from './jobs/stock-updater.jobs.js';
+import arcjectMiddleware from './middlewares/arcjet.middleware.js';
+// import { requireAuthNonStrict, requireAuthStrict } from './middlewares/auth.middleware.js';
 
 const app = express();
+
+// Initialize stock updater
+const stockUpdater = new StockUpdater();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser()); 
 app.use(requestLogger);
+app.use(arcjectMiddleware);
 
 app.get('/', (req, res) => {
-  res.send('Welcome to the Uptions Backend API!');
+  res.send('Welcome to the CTM Backend API!');
 });
 
 
-app.use('/api/v1/users', userRouter); 
+app.use('/api/v1/users', userRouter);
+app.use('/api/v1/stocks', stockRouter);
+app.use('/api/v1/crypto-options', cryptoOptionRouter);
+app.use('/api/v1/copytrading-options', copyTradingOptionRouter);
+
+// Manual stock update endpoint (for debugging/admin)
+app.post('/api/admin/update-stocks', async (req, res, next) => {
+  try {
+    // Run update in background
+    stockUpdater.triggerUpdate();
+    res.json({
+      success: true,
+      message: 'Stock update triggered'
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // 404 for unmatched routes
 app.use(notFoundHandler);
@@ -32,6 +57,9 @@ app.listen(PORT, async () => {
   console.log(`CTM API is running on http://localhost:${PORT}`); 
 
   await connectToDatabase();
+
+  // Update every 6 hours (adjust as needed)
+  // stockUpdater.startScheduler();
 });
 
 export default app;

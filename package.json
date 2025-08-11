@@ -12,7 +12,10 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@arcjet/inspect": "^1.0.0-beta.10",
+    "@arcjet/node": "^1.0.0-beta.10",
     "@clerk/clerk-sdk-node": "^4.13.23",
+    "axios": "^1.11.0",
     "bcryptjs": "^3.0.2",
     "chalk": "^5.5.0",
     "cookie-parser": "^1.4.7",
