@@ -1,4 +1,5 @@
-import CryptoOption from '../models/crypto-option.model.js';
+import CryptoOption from '../model/crypto-option.model.js';
+import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
 
 class CryptoOptionController {
   // Get all crypto options
@@ -24,21 +25,25 @@ class CryptoOptionController {
   // Create new crypto option
   static async createCryptoOption(req, res) {
     try {
-      const { token_name, token_address, user_id, user_name, token_symbol } = req.body;
+      const { token_name, token_address, user, token_symbol } = req.body;
 
       // Validate required fields
-      if (!token_name || !token_address || !user_id || !user_name || !token_symbol) {
+      if (!token_name || !token_address || !user || !token_symbol) {
         return res.status(400).json({
           success: false,
-          message: 'All fields are required: token_name, token_address, user_id, user_name, token_symbol'
+          message: 'All fields are required: token_name, token_address, user, token_symbol'
         });
+      }
+
+      const validation = await validateBodyUser(user);
+      if (!validation.ok) {
+        return res.status(validation.status).json({ success: false, message: validation.message });
       }
 
       const cryptoOption = new CryptoOption({
         token_name,
         token_address,
-        user_id,
-        user_name,
+        user,
         token_symbol
       });
 
@@ -63,15 +68,21 @@ class CryptoOptionController {
   static async updateCryptoOption(req, res) {
     try {
       const { id } = req.params;
-      const { token_name, token_address, user_id, user_name, token_symbol } = req.body;
+      const { token_name, token_address, user, token_symbol } = req.body;
+
+      if (user) {
+        const validation = await validateBodyUser(user);
+        if (!validation.ok) {
+          return res.status(validation.status).json({ success: false, message: validation.message });
+        }
+      }
 
       const updatedCryptoOption = await CryptoOption.findByIdAndUpdate(
         id,
         {
           token_name,
           token_address,
-          user_id,
-          user_name,
+          user,
           token_symbol
         },
         { 
@@ -162,9 +173,13 @@ class CryptoOptionController {
   // Get crypto options by user ID
   static async getCryptoOptionsByUserId(req, res) {
     try {
-      const { user_id } = req.params;
+      const { userId } = req.params;
+      const validation = await validateUserExists(userId);
+      if (!validation.ok) {
+        return res.status(validation.status).json({ success: false, message: validation.message });
+      }
 
-      const cryptoOptions = await CryptoOption.find({ user_id }).sort({ createdAt: -1 });
+      const cryptoOptions = await CryptoOption.find({ user: userId }).sort({ createdAt: -1 });
 
       res.json({
         success: true,

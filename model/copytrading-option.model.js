@@ -14,10 +14,11 @@ const copytradingOptionSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
-  user_id: {
-    type: String,
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
     required: true,
-    trim: true
+    index: true
   },
   user_name: {
     type: String,
@@ -63,7 +64,7 @@ const copytradingOptionSchema = new mongoose.Schema({
 });
 
 // Create indexes for better query performance
-copytradingOptionSchema.index({ user_id: 1 });
+copytradingOptionSchema.index({ user: 1 });
 copytradingOptionSchema.index({ isRecommended: 1 });
 copytradingOptionSchema.index({ trade_risk: 1 });
 copytradingOptionSchema.index({ trade_roi_max: -1 });

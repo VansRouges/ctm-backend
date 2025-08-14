@@ -8,8 +8,17 @@ import userRouter from './routes/user.route.js';
 import stockRouter from './routes/stock.route.js';
 import cryptoOptionRouter from './routes/crypto-option.route.js';
 import copyTradingOptionRouter from './routes/copytrading-option.route.js';
+import adminEmailRouter from './routes/admin-email.route.js'; 
+import userSupportRouter from './routes/user-support.route.js'; // Import user support router
+import depositRouter from './routes/deposit.route.js';
+import withdrawRouter from './routes/withdraw.route.js';
+import copytradePurchaseRouter from './routes/copytrade-purchase.route.js';
+
 import StockUpdater from './jobs/stock-updater.jobs.js';
+import cryptoPricesRouter from './routes/crypto-prices.route.js';
 import arcjectMiddleware from './middlewares/arcjet.middleware.js';
+
+
 // import { requireAuthNonStrict, requireAuthStrict } from './middlewares/auth.middleware.js';
 
 const app = express();
@@ -29,9 +38,15 @@ app.get('/', (req, res) => {
 
 
 app.use('/api/v1/users', userRouter);
+app.use('/api/v1/crypto-prices', cryptoPricesRouter);
 app.use('/api/v1/stocks', stockRouter);
 app.use('/api/v1/crypto-options', cryptoOptionRouter);
 app.use('/api/v1/copytrading-options', copyTradingOptionRouter);
+app.use('/api/v1/admin-emails', adminEmailRouter);
+app.use('/api/v1/user-support', userSupportRouter);
+app.use('/api/v1/deposits', depositRouter);
+app.use('/api/v1/withdraws', withdrawRouter);
+app.use('/api/v1/copytrade-purchases', copytradePurchaseRouter);
 
 // Manual stock update endpoint (for debugging/admin)
 app.post('/api/admin/update-stocks', async (req, res, next) => {

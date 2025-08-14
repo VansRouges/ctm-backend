@@ -3,25 +3,21 @@ import CopytradingOptionController from '../controllers/copytrading-option.contr
 
 const copyTradingOptionRouter = express.Router();
 
-// GET /api/copytrading-options - Get all copytrading options
+// GET all
 copyTradingOptionRouter.get('/', CopytradingOptionController.getAllCopytradingOptions);
 
-// POST /api/copytrading-options - Create new copytrading option
-copyTradingOptionRouter.post('/', CopytradingOptionController.createCopytradingOption);
-
-// GET /api/copytrading-options/recommended - Get recommended copytrading options
+// Recommended first (static)
 copyTradingOptionRouter.get('/recommended', CopytradingOptionController.getRecommendedCopytradingOptions);
 
-// GET /api/copytrading-options/:id - Get copytrading option by ID
+// User route BEFORE :id to avoid param conflict
+copyTradingOptionRouter.get('/user/:userId', CopytradingOptionController.getCopytradingOptionsByUserId);
+
+// Create
+copyTradingOptionRouter.post('/', CopytradingOptionController.createCopytradingOption);
+
+// ID routes
 copyTradingOptionRouter.get('/:id', CopytradingOptionController.getCopytradingOptionById);
-
-// PUT /api/copytrading-options/:id - Update copytrading option
 copyTradingOptionRouter.put('/:id', CopytradingOptionController.updateCopytradingOption);
-
-// DELETE /api/copytrading-options/:id - Delete copytrading option
 copyTradingOptionRouter.delete('/:id', CopytradingOptionController.deleteCopytradingOption);
-
-// GET /api/copytrading-options/user/:user_id - Get copytrading options by user ID
-copyTradingOptionRouter.get('/user/:user_id', CopytradingOptionController.getCopytradingOptionsByUserId);
 
 export default copyTradingOptionRouter;

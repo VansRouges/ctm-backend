@@ -11,5 +11,6 @@ export const {
     CLERK_SECRET_KEY,
     ARCJET_API_KEY,
     ARCJET_ENV,
+    CMC_API_KEY,
     JWT_SECRET
 } = process.env;

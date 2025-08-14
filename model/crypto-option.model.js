@@ -11,15 +11,11 @@ const cryptoOptionSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
-  user_id: {
-    type: String,
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
     required: true,
-    trim: true
-  },
-  user_name: {
-    type: String,
-    required: true,
-    trim: true
+    index: true
   },
   token_symbol: {
     type: String,
@@ -32,7 +28,7 @@ const cryptoOptionSchema = new mongoose.Schema({
 });
 
 // Create indexes for better query performance
-cryptoOptionSchema.index({ user_id: 1 });
+cryptoOptionSchema.index({ user: 1 });
 cryptoOptionSchema.index({ token_symbol: 1 });
 cryptoOptionSchema.index({ token_address: 1 });
 

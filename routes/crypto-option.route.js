@@ -3,22 +3,18 @@ import CryptoOptionController from '../controllers/crypto-option.controller.js';
 
 const cryptoOptionRouter = express.Router();
 
-// GET /api/crypto-options - Get all crypto options
+// GET /api/v1/crypto-options - Get all crypto options
 cryptoOptionRouter.get('/', CryptoOptionController.getAllCryptoOptions);
 
-// POST /api/crypto-options - Create new crypto option
+// (Place user route BEFORE :id to avoid conflict)
+cryptoOptionRouter.get('/user/:userId', CryptoOptionController.getCryptoOptionsByUserId);
+
+// POST /api/v1/crypto-options - Create
 cryptoOptionRouter.post('/', CryptoOptionController.createCryptoOption);
 
-// GET /api/crypto-options/:id - Get crypto option by ID
+// ID-specific routes
 cryptoOptionRouter.get('/:id', CryptoOptionController.getCryptoOptionById);
-
-// PUT /api/crypto-options/:id - Update crypto option
 cryptoOptionRouter.put('/:id', CryptoOptionController.updateCryptoOption);
-
-// DELETE /api/crypto-options/:id - Delete crypto option
 cryptoOptionRouter.delete('/:id', CryptoOptionController.deleteCryptoOption);
-
-// GET /api/crypto-options/user/:user_id - Get crypto options by user ID
-cryptoOptionRouter.get('/user/:user_id', CryptoOptionController.getCryptoOptionsByUserId);
 
 export default cryptoOptionRouter;
