@@ -2,8 +2,6 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import requestLogger from './middlewares/logger.middleware.js'
 import { notFoundHandler, errorHandler } from './middlewares/error.middleware.js'
-import { PORT } from './config/env.js';
-import connectToDatabase from './database/mongodb.js';
 import userRouter from './routes/user.route.js';
 import stockRouter from './routes/stock.route.js';
 import cryptoOptionRouter from './routes/crypto-option.route.js';
@@ -23,7 +21,8 @@ import arcjectMiddleware from './middlewares/arcjet.middleware.js';
 
 const app = express();
 
-// Initialize stock updater
+// NOTE: Scheduler start & DB connection happen in server.js (runtime bootstrap)
+// We still create an instance for manual trigger endpoint; scheduler is only started elsewhere.
 const stockUpdater = new StockUpdater();
 
 app.use(express.json());
@@ -67,14 +66,5 @@ app.use(notFoundHandler);
 
 // Central error handler
 app.use(errorHandler);
-
-app.listen(PORT, async () => {
-  console.log(`CTM API is running on http://localhost:${PORT}`); 
-
-  await connectToDatabase();
-
-  // Update every 6 hours (adjust as needed)
-  // stockUpdater.startScheduler();
-});
 
 export default app;
