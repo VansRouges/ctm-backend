@@ -1,5 +1,6 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import cors from 'cors';
 import requestLogger from './middlewares/logger.middleware.js'
 import { notFoundHandler, errorHandler } from './middlewares/error.middleware.js'
 import userRouter from './routes/user.route.js';
@@ -25,6 +26,20 @@ const app = express();
 // We still create an instance for manual trigger endpoint; scheduler is only started elsewhere.
 const stockUpdater = new StockUpdater();
 
+// CORS configuration
+const corsOptions = {
+  origin: [
+    'http://localhost:3000',
+    'https://www.copytradingmarkets.com',
+    'https://ctm-user-end.vercel.app'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser()); 
