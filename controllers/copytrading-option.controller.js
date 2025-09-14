@@ -19,19 +19,16 @@ class CopytradingOptionController {
         trade_max,
         trade_min,
         user,
-        user_name,
         trade_description,
         trade_roi_min,
         trade_roi_max,
         isRecommended,
         trade_risk,
-        trade_duration,
-        trade_approval_date,
-        trade_end_date
+        trade_duration
       } = req.body;
 
       const requiredFields = [
-        'trade_title', 'trade_max', 'trade_min', 'user', 'user_name',
+        'trade_title', 'trade_max', 'trade_min', 'user',
         'trade_description', 'trade_roi_min', 'trade_roi_max', 'trade_risk', 'trade_duration'
       ];
 
@@ -51,15 +48,12 @@ class CopytradingOptionController {
         trade_max,
         trade_min,
         user,
-        user_name,
         trade_description,
         trade_roi_min,
         trade_roi_max,
         isRecommended: !!isRecommended,
         trade_risk,
-        trade_duration,
-        trade_approval_date,
-        trade_end_date
+        trade_duration
       });
 
       const savedCopytradingOption = await copytradingOption.save();

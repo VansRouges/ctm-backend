@@ -20,11 +20,6 @@ const copytradingOptionSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  user_name: {
-    type: String,
-    required: true,
-    trim: true
-  },
   trade_description: {
     type: String,
     required: true,
@@ -50,14 +45,6 @@ const copytradingOptionSchema = new mongoose.Schema({
   trade_duration: {
     type: Number,
     required: true
-  },
-  trade_approval_date: {
-    type: String,
-    trim: true
-  },
-  trade_end_date: {
-    type: String,
-    trim: true
   }
 }, {
   timestamps: true
