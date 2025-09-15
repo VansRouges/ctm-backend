@@ -69,29 +69,41 @@ class StockUpdater {
       }));
   }
 
-  // Update stocks in database using upsert
+  // Clear old data for exchange before updating
+  async clearExchangeData(exchange) {
+    try {
+      console.log(`🗑️  Clearing old ${exchange} data...`);
+      const result = await Stock.deleteMany({ exchange: exchange });
+      console.log(`✓ Cleared ${result.deletedCount} old records for ${exchange}`);
+      return result;
+    } catch (error) {
+      console.error(`Error clearing ${exchange} data:`, error.message);
+      throw error;
+    }
+  }
+
+  // Update stocks in database using bulk insert after clearing
   async updateStocksInDB(processedData, exchange) {
     try {
       console.log(`Updating ${processedData.length} stocks for ${exchange} in database...`);
       
-      // Use bulkWrite for better performance
-      const bulkOps = processedData.map(stock => ({
-        updateOne: {
-          filter: { symbol: stock.symbol, exchange: stock.exchange },
-          update: { $set: stock },
-          upsert: true
-        }
-      }));
-
-      const result = await Stock.bulkWrite(bulkOps);
+      // Clear old data first to prevent duplicates
+      await this.clearExchangeData(exchange);
       
-      console.log(`✓ Database update complete for ${exchange}:`, {
-        matched: result.matchedCount,
-        modified: result.modifiedCount,
-        upserted: result.upsertedCount
-      });
+      // Insert new data in batches to avoid memory issues
+      const batchSize = 1000;
+      let insertedCount = 0;
       
-      return result;
+      for (let i = 0; i < processedData.length; i += batchSize) {
+        const batch = processedData.slice(i, i + batchSize);
+        await Stock.insertMany(batch, { ordered: false });
+        insertedCount += batch.length;
+        console.log(`✓ Inserted batch ${Math.ceil((i + batchSize) / batchSize)} (${insertedCount}/${processedData.length})`);
+      }
+      
+      console.log(`✓ Database update complete for ${exchange}: ${insertedCount} stocks inserted`);
+      
+      return { insertedCount };
       
     } catch (error) {
       console.error(`Database update error for ${exchange}:`, error.message);
@@ -131,8 +143,7 @@ class StockUpdater {
           results[exchange] = {
             fetched: rawData.length,
             processed: processedData.length,
-            updated: dbResult.modifiedCount,
-            created: dbResult.upsertedCount
+            inserted: dbResult.insertedCount
           };
           
           totalStocks += processedData.length;

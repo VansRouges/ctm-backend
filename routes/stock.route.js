@@ -17,6 +17,10 @@ stockRouter.get('/exchanges', StockController.getExchanges);
 // Query params: limit, type (gainers|losers)
 stockRouter.get('/top-performers', StockController.getTopPerformers);
 
+// GET /api/stocks/exchange/:exchange - Get stocks by specific exchange (NASDAQ, NYSE, AMEX)
+// Query params: page, limit, sortBy, sortOrder, search
+stockRouter.get('/exchange/:exchange', StockController.getStocksByExchange);
+
 // GET /api/stocks/:symbol - Get a specific stock by symbol
 stockRouter.get('/:symbol', StockController.getStockBySymbol);
 

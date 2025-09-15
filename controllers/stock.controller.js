@@ -223,6 +223,88 @@ class StockController {
       });
     }
   }
+
+  // Get stocks by specific exchange
+  static async getStocksByExchange(req, res) {
+    try {
+      const { exchange } = req.params;
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 50;
+      const sortBy = req.query.sortBy || 'symbol';
+      const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
+      const search = req.query.search || '';
+      
+      // Validate exchange
+      const validExchanges = ['NASDAQ', 'NYSE', 'AMEX'];
+      const exchangeUpper = exchange.toUpperCase();
+      if (!validExchanges.includes(exchangeUpper)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid exchange. Valid exchanges: ${validExchanges.join(', ')}`
+        });
+      }
+      
+      // Build query filter
+      let filter = { exchange: exchangeUpper };
+      
+      if (search) {
+        filter.$or = [
+          { name: { $regex: search, $options: 'i' } },
+          { symbol: { $regex: search, $options: 'i' } }
+        ];
+      }
+      
+      // Calculate skip value
+      const skip = (page - 1) * limit;
+      
+      // Build sort object
+      const sort = { [sortBy]: sortOrder };
+      
+      // Execute queries in parallel
+      const [stocks, total] = await Promise.all([
+        Stock.find(filter)
+          .sort(sort)
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Stock.countDocuments(filter)
+      ]);
+      
+      // Calculate pagination info
+      const totalPages = Math.ceil(total / limit);
+      const hasNext = page < totalPages;
+      const hasPrev = page > 1;
+      
+      res.json({
+        success: true,
+        data: stocks,
+        exchange: exchangeUpper,
+        pagination: {
+          currentPage: page,
+          totalPages,
+          totalItems: total,
+          itemsPerPage: limit,
+          hasNext,
+          hasPrev,
+          nextPage: hasNext ? page + 1 : null,
+          prevPage: hasPrev ? page - 1 : null
+        },
+        filters: {
+          search,
+          sortBy,
+          sortOrder: sortOrder === 1 ? 'asc' : 'desc'
+        }
+      });
+      
+    } catch (error) {
+      console.error('Error fetching stocks by exchange:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch stocks by exchange',
+        error: error.message
+      });
+    }
+  }
 }
 
 export default StockController;
