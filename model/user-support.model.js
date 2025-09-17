@@ -7,12 +7,6 @@ const userSupportSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  clerkId: {
-    type: String,
-    required: true,
-    trim: true,
-    index: true
-  },
   full_name: {
     type: String,
     required: true,
@@ -50,7 +44,6 @@ const userSupportSchema = new mongoose.Schema({
 
 // Create indexes for better query performance
 userSupportSchema.index({ user: 1 });
-userSupportSchema.index({ clerkId: 1 });
 userSupportSchema.index({ status: 1 });
 userSupportSchema.index({ priority: 1 });
 userSupportSchema.index({ email: 1 });

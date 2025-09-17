@@ -1,4 +1,5 @@
 import UserSupport from '../model/user-support.model.js';
+import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
 
 class UserSupportController {
   // Get all user support tickets
@@ -24,18 +25,24 @@ class UserSupportController {
   // Create new user support ticket
   static async createUserSupport(req, res) {
     try {
-      const { user_id, full_name, priority, status, title, message, email } = req.body;
+      const { user, full_name, priority, status, title, message, email } = req.body;
 
       // Validate required fields
-      if (!user_id || !full_name || !title || !message || !email) {
+      if (!user || !full_name || !title || !message || !email) {
         return res.status(400).json({
           success: false,
-          message: 'All fields are required: user_id, full_name, title, message, email'
+          message: 'All fields are required: user, full_name, title, message, email'
         });
       }
 
+      // Validate user exists
+      const validation = await validateBodyUser(user);
+      if (!validation.ok) {
+        return res.status(validation.status).json({ success: false, message: validation.message });
+      }
+
       const userSupport = new UserSupport({
-        user_id,
+        user,
         full_name,
         priority: priority || 'medium',
         status: status || 'open',
@@ -65,12 +72,20 @@ class UserSupportController {
   static async updateUserSupport(req, res) {
     try {
       const { id } = req.params;
-      const { user_id, full_name, priority, status, title, message, email } = req.body;
+      const { user, full_name, priority, status, title, message, email } = req.body;
+
+      // If user field is being updated, validate it exists
+      if (user) {
+        const validation = await validateBodyUser(user);
+        if (!validation.ok) {
+          return res.status(validation.status).json({ success: false, message: validation.message });
+        }
+      }
 
       const updatedUserSupport = await UserSupport.findByIdAndUpdate(
         id,
         {
-          user_id,
+          user,
           full_name,
           priority,
           status,
@@ -166,9 +181,15 @@ class UserSupportController {
   // Get user support tickets by user ID
   static async getUserSupportByUserId(req, res) {
     try {
-      const { user_id } = req.params;
+      const { userId } = req.params;
 
-      const userSupport = await UserSupport.find({ user_id }).sort({ createdAt: -1 });
+      // Validate user exists
+      const validation = await validateUserExists(userId);
+      if (!validation.ok) {
+        return res.status(validation.status).json({ success: false, message: validation.message });
+      }
+
+      const userSupport = await UserSupport.find({ user: userId }).sort({ createdAt: -1 });
 
       res.json({
         success: true,
