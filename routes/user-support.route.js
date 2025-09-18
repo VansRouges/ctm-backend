@@ -18,8 +18,8 @@ userSupportRouter.put('/:id', UserSupportController.updateUserSupport);
 // DELETE /api/user-support/:id - Delete user support ticket
 userSupportRouter.delete('/:id', UserSupportController.deleteUserSupport);
 
-// GET /api/user-support/user/:user_id - Get user support tickets by user ID
-userSupportRouter.get('/user/:user_id', UserSupportController.getUserSupportByUserId);
+// GET /api/user-support/user/:userId - Get user support tickets by user ID
+userSupportRouter.get('/user/:userId', UserSupportController.getUserSupportByUserId);
 
 // GET /api/user-support/status/:status - Get user support tickets by status
 userSupportRouter.get('/status/:status', UserSupportController.getUserSupportByStatus);
