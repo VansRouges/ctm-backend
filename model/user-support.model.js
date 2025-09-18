@@ -15,12 +15,14 @@ const userSupportSchema = new mongoose.Schema({
   priority: {
     type: String,
     trim: true,
-    default: 'medium'
+    default: 'medium',
+    enum: ['low', 'medium', 'high'],
   },
   status: {
     type: String,
     trim: true,
-    default: 'open'
+    default: 'open',
+    enum: ['open', 'in_progress', 'resolved', 'closed']
   },
   title: {
     type: String,

@@ -35,6 +35,24 @@ class UserSupportController {
         });
       }
 
+      // Validate enum values
+      const validPriorities = ['low', 'medium', 'high'];
+      const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
+
+      if (priority && !validPriorities.includes(priority)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid priority. Valid values: ${validPriorities.join(', ')}`
+        });
+      }
+
+      if (status && !validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status. Valid values: ${validStatuses.join(', ')}`
+        });
+      }
+
       // Validate user exists
       const validation = await validateBodyUser(user);
       if (!validation.ok) {
@@ -73,6 +91,24 @@ class UserSupportController {
     try {
       const { id } = req.params;
       const { user, full_name, priority, status, title, message, email } = req.body;
+
+      // Validate enum values if provided
+      const validPriorities = ['low', 'medium', 'high'];
+      const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
+
+      if (priority && !validPriorities.includes(priority)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid priority. Valid values: ${validPriorities.join(', ')}`
+        });
+      }
+
+      if (status && !validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status. Valid values: ${validStatuses.join(', ')}`
+        });
+      }
 
       // If user field is being updated, validate it exists
       if (user) {
@@ -211,6 +247,15 @@ class UserSupportController {
     try {
       const { status } = req.params;
 
+      // Validate status enum
+      const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status. Valid values: ${validStatuses.join(', ')}`
+        });
+      }
+
       const userSupport = await UserSupport.find({ status }).sort({ createdAt: -1 });
 
       res.json({
@@ -232,6 +277,15 @@ class UserSupportController {
   static async getUserSupportByPriority(req, res) {
     try {
       const { priority } = req.params;
+
+      // Validate priority enum
+      const validPriorities = ['low', 'medium', 'high'];
+      if (!validPriorities.includes(priority)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid priority. Valid values: ${validPriorities.join(', ')}`
+        });
+      }
 
       const userSupport = await UserSupport.find({ priority }).sort({ createdAt: -1 });
 
