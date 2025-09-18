@@ -18,10 +18,10 @@ withdrawRouter.put('/:id', WithdrawController.updateWithdraw);
 // DELETE /api/withdraws/:id - Delete withdraw
 withdrawRouter.delete('/:id', WithdrawController.deleteWithdraw);
 
-// GET /api/withdraws/user/:user_id - Get withdraws for specific user
-withdrawRouter.get('/user/:user_id', WithdrawController.getUserWithdraws);
+// GET /api/withdraws/user/:userId - Get withdraws for specific user
+withdrawRouter.get('/user/:userId', WithdrawController.getUserWithdraws);
 
-// GET /api/withdraws/user/:user_id/status/:status - Get withdraws by status for specific user
-withdrawRouter.get('/user/:user_id/status/:status', WithdrawController.getUserWithdrawsByStatus);
+// GET /api/withdraws/user/:userId/status/:status - Get withdraws by status for specific user
+withdrawRouter.get('/user/:userId/status/:status', WithdrawController.getUserWithdrawsByStatus);
 
 export default withdrawRouter;
