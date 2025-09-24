@@ -12,13 +12,12 @@ import userSupportRouter from './routes/user-support.route.js'; // Import user s
 import depositRouter from './routes/deposit.route.js';
 import withdrawRouter from './routes/withdraw.route.js';
 import copytradePurchaseRouter from './routes/copytrade-purchase.route.js';
+import adminAuthRouter from './routes/admin-auth.route.js';
+import { requireAdminAuth } from './middlewares/auth.middleware.js';
 
 import StockUpdater from './jobs/stock-updater.jobs.js';
 import cryptoPricesRouter from './routes/crypto-prices.route.js';
 import arcjectMiddleware from './middlewares/arcjet.middleware.js';
-
-
-// import { requireAuthNonStrict, requireAuthStrict } from './middlewares/auth.middleware.js';
 
 const app = express();
 
@@ -61,9 +60,10 @@ app.use('/api/v1/user-support', userSupportRouter);
 app.use('/api/v1/deposits', depositRouter);
 app.use('/api/v1/withdraws', withdrawRouter);
 app.use('/api/v1/copytrade-purchases', copytradePurchaseRouter);
+app.use('/api/v1/admin/auth', adminAuthRouter);
 
 // Manual stock update endpoint (for debugging/admin)
-app.post('/api/admin/update-stocks', async (req, res, next) => {
+app.post('/api/admin/update-stocks', requireAdminAuth, async (req, res, next) => {
   try {
     // Run update in background
     stockUpdater.triggerUpdate();

@@ -3,11 +3,14 @@ import logger from '../utils/logger.js';
 
 // 404 handler for unknown routes
 const notFoundHandler = (req, res, next) => {
-	res.status(404).json({
-		success: false,
-		message: 'Route not found',
-		path: req.originalUrl || req.url
-	});
+	// Only send 404 if headers haven't been sent yet
+	if (!res.headersSent) {
+		res.status(404).json({
+			success: false,
+			message: 'Route not found',
+			path: req.originalUrl || req.url
+		});
+	}
 };
 
 // Centralized error handler
@@ -79,13 +82,15 @@ const errorHandler = (err, req, res, next) => {
 		);
 	}
 
-	// Send JSON response
-	return res.status(statusCode).json({
-		success: false,
-		message,
-		...(details ? { details } : {}),
-		...(isProd ? {} : { stack: err.stack })
-	});
+	// Send JSON response (only if headers haven't been sent)
+	if (!res.headersSent) {
+		return res.status(statusCode).json({
+			success: false,
+			message,
+			...(details ? { details } : {}),
+			...(isProd ? {} : { stack: err.stack })
+		});
+	}
 };
 
 export { notFoundHandler, errorHandler };

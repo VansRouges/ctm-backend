@@ -1,10 +1,11 @@
 import express from 'express';
 import CryptoOptionController from '../controllers/crypto-option.controller.js';
+import { requireAdminAuth } from '../middlewares/auth.middleware.js';
 
 const cryptoOptionRouter = express.Router();
 
-// GET /api/v1/crypto-options - Get all crypto options
-cryptoOptionRouter.get('/', CryptoOptionController.getAllCryptoOptions);
+// GET /api/v1/crypto-options - Get all crypto options (admin only)
+cryptoOptionRouter.get('/', requireAdminAuth, CryptoOptionController.getAllCryptoOptions);
 
 // (Place user route BEFORE :id to avoid conflict)
 cryptoOptionRouter.get('/user/:userId', CryptoOptionController.getCryptoOptionsByUserId);
@@ -15,6 +16,6 @@ cryptoOptionRouter.post('/', CryptoOptionController.createCryptoOption);
 // ID-specific routes
 cryptoOptionRouter.get('/:id', CryptoOptionController.getCryptoOptionById);
 cryptoOptionRouter.put('/:id', CryptoOptionController.updateCryptoOption);
-cryptoOptionRouter.delete('/:id', CryptoOptionController.deleteCryptoOption);
+cryptoOptionRouter.delete('/:id', requireAdminAuth, CryptoOptionController.deleteCryptoOption);  // Admin only
 
 export default cryptoOptionRouter;

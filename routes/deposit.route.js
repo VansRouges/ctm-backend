@@ -1,10 +1,11 @@
 import express from 'express';
 import DepositController from '../controllers/deposit.controller.js';
+import { requireAdminAuth } from '../middlewares/auth.middleware.js';
 
 const depositRouter = express.Router();
 
 // GET /api/deposits - Get all deposits (admin only)
-depositRouter.get('/', DepositController.getAllDeposits);
+depositRouter.get('/', requireAdminAuth, DepositController.getAllDeposits);
 
 // POST /api/deposits - Create new deposit
 depositRouter.post('/', DepositController.createDeposit);
@@ -15,8 +16,8 @@ depositRouter.get('/:id', DepositController.getDepositById);
 // PUT /api/deposits/:id - Update deposit
 depositRouter.put('/:id', DepositController.updateDeposit);
 
-// DELETE /api/deposits/:id - Delete deposit
-depositRouter.delete('/:id', DepositController.deleteDeposit);
+// DELETE /api/deposits/:id - Delete deposit (admin only)
+depositRouter.delete('/:id', requireAdminAuth, DepositController.deleteDeposit);
 
 // GET /api/deposits/user/:userId - Get deposits for specific user
 depositRouter.get('/user/:userId', DepositController.getUserDeposits);

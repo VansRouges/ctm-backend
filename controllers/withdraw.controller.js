@@ -117,6 +117,14 @@ class WithdrawController {
         return res.status(404).json({ success: false, message: 'Withdraw not found' });
       }
 
+      // If user field is being updated, validate it exists
+      if (updateData.user) {
+        const validation = await validateBodyUser(updateData.user);
+        if (!validation.ok) {
+          return res.status(validation.status).json({ success: false, message: validation.message });
+        }
+      }
+
       const prevStatus = existing.status;
 
       // Prevent editing amount/token once already approved
