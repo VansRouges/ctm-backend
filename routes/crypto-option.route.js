@@ -11,11 +11,11 @@ cryptoOptionRouter.get('/', requireAdminAuth, CryptoOptionController.getAllCrypt
 cryptoOptionRouter.get('/user/:userId', CryptoOptionController.getCryptoOptionsByUserId);
 
 // POST /api/v1/crypto-options - Create
-cryptoOptionRouter.post('/', CryptoOptionController.createCryptoOption);
+cryptoOptionRouter.post('/', requireAdminAuth, CryptoOptionController.createCryptoOption);
 
 // ID-specific routes
 cryptoOptionRouter.get('/:id', CryptoOptionController.getCryptoOptionById);
-cryptoOptionRouter.put('/:id', CryptoOptionController.updateCryptoOption);
+cryptoOptionRouter.put('/:id', requireAdminAuth, CryptoOptionController.updateCryptoOption);
 cryptoOptionRouter.delete('/:id', requireAdminAuth, CryptoOptionController.deleteCryptoOption);  // Admin only
 
 export default cryptoOptionRouter;

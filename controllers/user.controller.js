@@ -1,4 +1,5 @@
 import User from "../model/user.model.js";
+import { createNotification } from "../utils/notificationHelper.js";
 
 // Get all users
 const getUsers = async (req, res, next) => {
@@ -81,6 +82,15 @@ const getUserByClerkId = async (req, res, next) => {
 const createUser = async (req, res, next) => {
   try {
     const user = await User.create(req.body);
+    
+    // Create notification for admin
+    await createNotification({
+      action: 'user_created',
+      userId: user._id,
+      metadata: {
+        referenceId: user._id.toString()
+      }
+    });
     
     res.status(201).json({
       success: true,

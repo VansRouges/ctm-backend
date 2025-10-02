@@ -14,11 +14,11 @@ copyTradingOptionRouter.get('/recommended', CopytradingOptionController.getRecom
 copyTradingOptionRouter.get('/user/:userId', CopytradingOptionController.getCopytradingOptionsByUserId);
 
 // Create
-copyTradingOptionRouter.post('/', CopytradingOptionController.createCopytradingOption);
+copyTradingOptionRouter.post('/', requireAdminAuth, CopytradingOptionController.createCopytradingOption);
 
 // ID routes
 copyTradingOptionRouter.get('/:id', CopytradingOptionController.getCopytradingOptionById);
-copyTradingOptionRouter.put('/:id', CopytradingOptionController.updateCopytradingOption);
+copyTradingOptionRouter.put('/:id', requireAdminAuth, CopytradingOptionController.updateCopytradingOption);
 copyTradingOptionRouter.delete('/:id', requireAdminAuth, CopytradingOptionController.deleteCopytradingOption);  // Admin only
 
 export default copyTradingOptionRouter;

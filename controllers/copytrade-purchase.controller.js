@@ -1,5 +1,6 @@
 import CopytradePurchase from '../model/copytrade-purchase.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
+import { createNotification } from '../utils/notificationHelper.js';
 
 class CopytradePurchaseController {
   static async createCopytradePurchase(req, res) {
@@ -55,6 +56,19 @@ class CopytradePurchaseController {
       });
 
       const saved = await doc.save();
+      
+      // Create notification for admin
+      await createNotification({
+        action: 'copytrade_purchase',
+        userId: user,
+        metadata: {
+          amount: initial_investment,
+          currency: trade_token,
+          planName: trade_title,
+          referenceId: saved._id.toString()
+        }
+      });
+      
       res.status(201).json({ success: true, message: 'Copytrade purchase created successfully', data: saved });
     } catch (error) {
       console.error('Error creating copytrade purchase:', error);

@@ -14,7 +14,7 @@ depositRouter.post('/', DepositController.createDeposit);
 depositRouter.get('/:id', DepositController.getDepositById);
 
 // PUT /api/deposits/:id - Update deposit
-depositRouter.put('/:id', DepositController.updateDeposit);
+depositRouter.put('/:id', requireAdminAuth, DepositController.updateDeposit);
 
 // DELETE /api/deposits/:id - Delete deposit (admin only)
 depositRouter.delete('/:id', requireAdminAuth, DepositController.deleteDeposit);

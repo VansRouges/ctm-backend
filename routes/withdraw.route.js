@@ -14,7 +14,7 @@ withdrawRouter.post('/', WithdrawController.createWithdraw);
 withdrawRouter.get('/:id', WithdrawController.getWithdrawById);
 
 // PUT /api/withdraws/:id - Update withdraw
-withdrawRouter.put('/:id', WithdrawController.updateWithdraw);
+withdrawRouter.put('/:id', requireAdminAuth, WithdrawController.updateWithdraw);
 
 // DELETE /api/withdraws/:id - Delete withdraw (admin only)
 withdrawRouter.delete('/:id', requireAdminAuth, WithdrawController.deleteWithdraw);

@@ -13,6 +13,7 @@ import depositRouter from './routes/deposit.route.js';
 import withdrawRouter from './routes/withdraw.route.js';
 import copytradePurchaseRouter from './routes/copytrade-purchase.route.js';
 import adminAuthRouter from './routes/admin-auth.route.js';
+import notificationRouter from './routes/notification.route.js';
 import { requireAdminAuth } from './middlewares/auth.middleware.js';
 
 import StockUpdater from './jobs/stock-updater.jobs.js';
@@ -30,7 +31,8 @@ const corsOptions = {
   origin: [
     'http://localhost:3000',
     'https://www.copytradingmarkets.com',
-    'https://ctm-user-end.vercel.app'
+    'https://ctm-user-end.vercel.app',
+    'https://admin-ctm.vercel.app'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -61,6 +63,7 @@ app.use('/api/v1/deposits', depositRouter);
 app.use('/api/v1/withdraws', withdrawRouter);
 app.use('/api/v1/copytrade-purchases', copytradePurchaseRouter);
 app.use('/api/v1/admin/auth', adminAuthRouter);
+app.use('/api/v1/notifications', notificationRouter);
 
 // Manual stock update endpoint (for debugging/admin)
 app.post('/api/admin/update-stocks', requireAdminAuth, async (req, res, next) => {

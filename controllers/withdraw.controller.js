@@ -2,6 +2,7 @@ import Transaction from '../model/transaction.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
 import User from '../model/user.model.js';
 import { getTokenPrice } from '../utils/priceService.js';
+import { createNotification } from '../utils/notificationHelper.js';
 import mongoose from 'mongoose';
 
 class WithdrawController {
@@ -86,6 +87,17 @@ class WithdrawController {
       });
 
       const savedWithdraw = await withdraw.save();
+
+      // Create notification for admin
+      await createNotification({
+        action: 'withdraw',
+        userId: user,
+        metadata: {
+          amount,
+          currency: token_name,
+          referenceId: savedWithdraw._id.toString()
+        }
+      });
 
       res.status(201).json({
         success: true,

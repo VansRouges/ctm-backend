@@ -1,5 +1,6 @@
 import UserSupport from '../model/user-support.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
+import { createNotification } from '../utils/notificationHelper.js';
 
 class UserSupportController {
   // Get all user support tickets
@@ -70,6 +71,17 @@ class UserSupportController {
       });
 
       const savedUserSupport = await userSupport.save();
+
+      // Create notification for admin
+      await createNotification({
+        action: 'support_ticket',
+        userId: user,
+        metadata: {
+          subject: title,
+          priority: priority || 'medium',
+          referenceId: savedUserSupport._id.toString()
+        }
+      });
 
       res.status(201).json({
         success: true,
