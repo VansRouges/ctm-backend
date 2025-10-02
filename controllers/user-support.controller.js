@@ -1,6 +1,8 @@
 import UserSupport from '../model/user-support.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
 import { createNotification } from '../utils/notificationHelper.js';
+import { createAuditLog } from '../utils/auditHelper.js';
+import { invalidateAuditCache } from './audit-log.controller.js';
 
 class UserSupportController {
   // Get all user support tickets
@@ -130,6 +132,15 @@ class UserSupportController {
         }
       }
 
+      // Get old data before update
+      const oldData = await UserSupport.findById(id);
+      if (!oldData) {
+        return res.status(404).json({
+          success: false,
+          message: 'User support ticket not found'
+        });
+      }
+
       const updatedUserSupport = await UserSupport.findByIdAndUpdate(
         id,
         {
@@ -147,12 +158,21 @@ class UserSupportController {
         }
       );
 
-      if (!updatedUserSupport) {
-        return res.status(404).json({
-          success: false,
-          message: 'User support ticket not found'
-        });
-      }
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'support_ticket_update',
+        resourceType: 'support_ticket',
+        resourceId: updatedUserSupport._id.toString(),
+        resourceName: updatedUserSupport.title,
+        changes: {
+          before: oldData.toObject(),
+          after: updatedUserSupport.toObject()
+        },
+        description: `Updated support ticket: ${updatedUserSupport.title}`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
 
       res.json({
         success: true,
@@ -182,6 +202,18 @@ class UserSupportController {
           message: 'User support ticket not found'
         });
       }
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'support_ticket_delete',
+        resourceType: 'support_ticket',
+        resourceId: deletedUserSupport._id.toString(),
+        resourceName: deletedUserSupport.title,
+        description: `Deleted support ticket: ${deletedUserSupport.title}`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
 
       res.json({
         success: true,

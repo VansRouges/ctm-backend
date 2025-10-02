@@ -14,7 +14,10 @@ import withdrawRouter from './routes/withdraw.route.js';
 import copytradePurchaseRouter from './routes/copytrade-purchase.route.js';
 import adminAuthRouter from './routes/admin-auth.route.js';
 import notificationRouter from './routes/notification.route.js';
+import auditLogRouter from './routes/audit-log.route.js';
 import { requireAdminAuth } from './middlewares/auth.middleware.js';
+import { createAuditLog } from './utils/auditHelper.js';
+import { invalidateAuditCache } from './controllers/audit-log.controller.js';
 
 import StockUpdater from './jobs/stock-updater.jobs.js';
 import cryptoPricesRouter from './routes/crypto-prices.route.js';
@@ -64,12 +67,24 @@ app.use('/api/v1/withdraws', withdrawRouter);
 app.use('/api/v1/copytrade-purchases', copytradePurchaseRouter);
 app.use('/api/v1/admin/auth', adminAuthRouter);
 app.use('/api/v1/notifications', notificationRouter);
+app.use('/api/v1/audit-logs', auditLogRouter);
 
 // Manual stock update endpoint (for debugging/admin)
 app.post('/api/admin/update-stocks', requireAdminAuth, async (req, res, next) => {
   try {
     // Run update in background
     stockUpdater.triggerUpdate();
+
+    // Create audit log
+    await createAuditLog(req, res, {
+      action: 'stock_update_trigger',
+      resourceType: 'stock',
+      description: 'Triggered manual stock update'
+    });
+
+    // Invalidate audit cache
+    await invalidateAuditCache();
+
     res.json({
       success: true,
       message: 'Stock update triggered'

@@ -1,6 +1,8 @@
 import CopytradePurchase from '../model/copytrade-purchase.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
 import { createNotification } from '../utils/notificationHelper.js';
+import { createAuditLog } from '../utils/auditHelper.js';
+import { invalidateAuditCache } from './audit-log.controller.js';
 
 class CopytradePurchaseController {
   static async createCopytradePurchase(req, res) {
@@ -121,16 +123,51 @@ class CopytradePurchaseController {
         if (!validation.ok) return res.status(validation.status).json({ success: false, message: validation.message });
       }
 
+      // Get old data before update
+      const oldData = await CopytradePurchase.findById(id);
+      if (!oldData) return res.status(404).json({ success: false, message: 'Copytrade purchase not found' });
+
       if (updateData.trade_current_value !== undefined || updateData.initial_investment !== undefined) {
-        const existing = await CopytradePurchase.findById(id);
-        if (!existing) return res.status(404).json({ success: false, message: 'Copytrade purchase not found' });
-        Object.assign(existing, updateData);
-        await existing.save();
-        return res.json({ success: true, message: 'Copytrade purchase updated successfully', data: existing });
+        Object.assign(oldData, updateData);
+        await oldData.save();
+
+        // Create audit log
+        await createAuditLog(req, res, {
+          action: 'copytrade_purchase_update',
+          resourceType: 'copytrade_purchase',
+          resourceId: oldData._id.toString(),
+          resourceName: oldData.trade_title,
+          changes: {
+            before: oldData.toObject(),
+            after: oldData.toObject()
+          },
+          description: `Updated copytrade purchase: ${oldData.trade_title}`
+        });
+
+        // Invalidate audit cache
+        await invalidateAuditCache();
+
+        return res.json({ success: true, message: 'Copytrade purchase updated successfully', data: oldData });
       }
 
       const updated = await CopytradePurchase.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
-      if (!updated) return res.status(404).json({ success: false, message: 'Copytrade purchase not found' });
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'copytrade_purchase_update',
+        resourceType: 'copytrade_purchase',
+        resourceId: updated._id.toString(),
+        resourceName: updated.trade_title,
+        changes: {
+          before: oldData.toObject(),
+          after: updated.toObject()
+        },
+        description: `Updated copytrade purchase: ${updated.trade_title}`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
       res.json({ success: true, message: 'Copytrade purchase updated successfully', data: updated });
     } catch (error) {
       console.error('Error updating copytrade purchase:', error);
@@ -143,6 +180,19 @@ class CopytradePurchaseController {
       const { id } = req.params;
       const deleted = await CopytradePurchase.findByIdAndDelete(id);
       if (!deleted) return res.status(404).json({ success: false, message: 'Copytrade purchase not found' });
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'copytrade_purchase_delete',
+        resourceType: 'copytrade_purchase',
+        resourceId: deleted._id.toString(),
+        resourceName: deleted.trade_title,
+        description: `Deleted copytrade purchase: ${deleted.trade_title}`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
       res.json({ success: true, message: 'Copytrade purchase deleted successfully', data: deleted });
     } catch (error) {
       console.error('Error deleting copytrade purchase:', error);

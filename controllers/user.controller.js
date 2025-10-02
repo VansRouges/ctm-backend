@@ -1,5 +1,7 @@
 import User from "../model/user.model.js";
 import { createNotification } from "../utils/notificationHelper.js";
+import { createAuditLog } from "../utils/auditHelper.js";
+import { invalidateAuditCache } from "./audit-log.controller.js";
 
 // Get all users
 const getUsers = async (req, res, next) => {
@@ -118,8 +120,18 @@ const createUser = async (req, res, next) => {
 };
 
 // Update user
-const updateUser = async (req, res) => {
+const updateUser = async (req, res, next) => {
   try {
+    // Get old user data before update
+    const oldUser = await User.findById(req.params.id);
+    
+    if (!oldUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
     const user = await User.findByIdAndUpdate(
       req.params.id,
       req.body,
@@ -129,19 +141,27 @@ const updateUser = async (req, res) => {
       }
     );
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
+    // Create audit log
+    await createAuditLog(req, res, {
+      action: 'user_update',
+      resourceType: 'user',
+      resourceId: user._id.toString(),
+      resourceName: user.email,
+      changes: {
+        before: oldUser.toObject(),
+        after: user.toObject()
+      },
+      description: `Updated user: ${user.email}`
+    });
+
+    // Invalidate audit cache
+    await invalidateAuditCache();
 
     res.json({
       success: true,
       message: 'User updated successfully',
       data: user
     });
-    next();
   } catch (error) {
     res.status(400).json({
       success: false,
@@ -153,7 +173,7 @@ const updateUser = async (req, res) => {
 };
 
 // Delete user
-const deleteUser = async (req, res) => {
+const deleteUser = async (req, res, next) => {
   try {
     const user = await User.findByIdAndDelete(req.params.id);
 
@@ -163,6 +183,18 @@ const deleteUser = async (req, res) => {
         message: 'User not found'
       });
     }
+
+    // Create audit log
+    await createAuditLog(req, res, {
+      action: 'user_delete',
+      resourceType: 'user',
+      resourceId: user._id.toString(),
+      resourceName: user.email,
+      description: `Deleted user: ${user.email}`
+    });
+
+    // Invalidate audit cache
+    await invalidateAuditCache();
 
     res.json({
       success: true,

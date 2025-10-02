@@ -1,6 +1,8 @@
 import bcrypt from 'bcryptjs';
 import { generateAdminToken } from '../middlewares/auth.middleware.js';
 import redisClient from '../config/redis.js';
+import { createAuditLog } from '../utils/auditHelper.js';
+import { invalidateAuditCache } from './audit-log.controller.js';
 
 // Helper function to add token to blacklist using Redis
 const blacklistToken = async (token) => {
@@ -73,6 +75,29 @@ class AdminAuthController {
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
       });
 
+      // Create a temporary request object for audit logging
+      const auditReq = {
+        admin: {
+          id: ADMIN_CREDENTIALS.id,
+          username: ADMIN_CREDENTIALS.username,
+          email: ADMIN_CREDENTIALS.email
+        },
+        ip: req.ip,
+        headers: req.headers,
+        method: req.method,
+        originalUrl: req.originalUrl
+      };
+
+      // Create audit log for admin login
+      await createAuditLog(auditReq, res, {
+        action: 'admin_login',
+        resourceType: 'admin',
+        description: `Admin ${ADMIN_CREDENTIALS.username} logged in successfully`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
       res.json({
         success: true,
         message: 'Login successful',
@@ -118,6 +143,18 @@ class AdminAuthController {
 
       // Clear cookie
       res.clearCookie('admin_token');
+
+      // Create audit log for admin logout
+      if (req.admin) {
+        await createAuditLog(req, res, {
+          action: 'admin_logout',
+          resourceType: 'admin',
+          description: `Admin ${req.admin.username} logged out`
+        });
+
+        // Invalidate audit cache
+        await invalidateAuditCache();
+      }
 
       res.json({
         success: true,

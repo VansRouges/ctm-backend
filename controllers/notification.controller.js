@@ -1,25 +1,32 @@
 import Notification from '../model/notification.model.js';
+import redisClient from '../config/redis.js';
+import { createAuditLog } from '../utils/auditHelper.js';
+import { invalidateAuditCache } from './audit-log.controller.js';
 
-// Simple in-memory cache
-const notificationCache = {
-  data: null,
-  timestamp: null,
-  TTL: 30000 // 30 seconds cache
-};
+const CACHE_KEY = 'notifications';
+const CACHE_TTL = 60; // 60 seconds
 
-// Helper function to invalidate cache
-const invalidateCache = () => {
-  notificationCache.data = null;
-  notificationCache.timestamp = null;
-  notificationCache.cacheKey = null;
-  console.log('📦 Notification cache invalidated');
+// Helper function to invalidate cache (Redis-based)
+const invalidateCache = async () => {
+  if (redisClient.isConnected) {
+    try {
+      // Delete all cache keys that start with 'notifications:'
+      const keys = await redisClient.client.keys(`${CACHE_KEY}:*`);
+      if (keys && keys.length > 0) {
+        await Promise.all(keys.map(key => redisClient.del(key)));
+        console.log(`📦 Notification cache invalidated (${keys.length} keys cleared)`);
+      }
+    } catch (error) {
+      console.error('Failed to invalidate notification cache:', error);
+    }
+  }
 };
 
 // Export invalidate function for use by notification helper
 export { invalidateCache };
 
 class NotificationController {
-  // Get all notifications (admin only) - with caching
+  // Get all notifications (admin only) - with Redis caching
   static async getAllNotifications(req, res) {
     try {
       const { 
@@ -42,26 +49,28 @@ class NotificationController {
       }
 
       // Create cache key based on query parameters
-      const cacheKey = JSON.stringify({ status, action, sortBy, sortOrder });
-      const now = Date.now();
+      const cacheKey = `${CACHE_KEY}:${JSON.stringify({ status, action, sortBy, sortOrder })}`;
 
-      // Check if we have valid cached data
-      if (
-        notificationCache.data && 
-        notificationCache.timestamp && 
-        notificationCache.cacheKey === cacheKey &&
-        (now - notificationCache.timestamp) < notificationCache.TTL
-      ) {
-        // Return cached data
-        return res.set('X-Cache', 'HIT').json({
-          success: true,
-          message: 'Notifications retrieved successfully (cached)',
-          data: notificationCache.data.notifications,
-          totalCount: notificationCache.data.totalCount,
-          unreadCount: notificationCache.data.unreadCount,
-          cached: true,
-          cacheAge: Math.floor((now - notificationCache.timestamp) / 1000) + 's'
-        });
+      // Check Redis cache
+      if (redisClient.isConnected) {
+        try {
+          const cachedData = await redisClient.get(cacheKey);
+          if (cachedData) {
+            const parsed = JSON.parse(cachedData);
+            return res.set('X-Cache', 'HIT').json({
+              success: true,
+              message: 'Notifications retrieved successfully (cached)',
+              data: parsed.notifications,
+              totalCount: parsed.totalCount,
+              unreadCount: parsed.unreadCount,
+              cached: true,
+              source: 'redis'
+            });
+          }
+        } catch (cacheError) {
+          console.error('Redis cache read error:', cacheError);
+          // Continue to database query if cache fails
+        }
       }
 
       const sort = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
@@ -76,14 +85,20 @@ class NotificationController {
         Notification.countDocuments({ status: 'unread' })
       ]);
 
-      // Cache the results
-      notificationCache.data = {
-        notifications,
-        totalCount,
-        unreadCount
-      };
-      notificationCache.timestamp = now;
-      notificationCache.cacheKey = cacheKey;
+      // Cache the results in Redis
+      if (redisClient.isConnected) {
+        try {
+          const cacheData = {
+            notifications,
+            totalCount,
+            unreadCount
+          };
+          await redisClient.set(cacheKey, JSON.stringify(cacheData), CACHE_TTL);
+        } catch (cacheError) {
+          console.error('Redis cache write error:', cacheError);
+          // Continue even if caching fails
+        }
+      }
 
       res.set('X-Cache', 'MISS').json({
         success: true,
@@ -91,7 +106,8 @@ class NotificationController {
         data: notifications,
         totalCount,
         unreadCount,
-        cached: false
+        cached: false,
+        source: 'database'
       });
     } catch (error) {
       console.error('Get all notifications error:', error);
@@ -163,6 +179,22 @@ class NotificationController {
       // Invalidate cache after update
       invalidateCache();
 
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'notification_update',
+        resourceType: 'notification',
+        resourceId: notification._id.toString(),
+        resourceName: notification.action,
+        changes: {
+          before: { status: id.status },
+          after: { status: notification.status }
+        },
+        description: `Updated notification status to ${status}`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
       res.json({
         success: true,
         message: 'Notification status updated successfully',
@@ -188,6 +220,16 @@ class NotificationController {
 
       // Invalidate cache after bulk update
       invalidateCache();
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'notification_bulk_update',
+        resourceType: 'notification',
+        description: `Marked ${result.modifiedCount} notifications as read`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
 
       res.json({
         success: true,
@@ -223,6 +265,18 @@ class NotificationController {
       // Invalidate cache after delete
       invalidateCache();
 
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'notification_delete',
+        resourceType: 'notification',
+        resourceId: notification._id.toString(),
+        resourceName: notification.action,
+        description: `Deleted notification: ${notification.action}`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
       res.json({
         success: true,
         message: 'Notification deleted successfully',
@@ -245,6 +299,16 @@ class NotificationController {
 
       // Invalidate cache after bulk delete
       invalidateCache();
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'notification_bulk_delete',
+        resourceType: 'notification',
+        description: `Deleted ${result.deletedCount} read notifications`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
 
       res.json({
         success: true,
