@@ -163,33 +163,37 @@ class NotificationController {
         });
       }
 
-      const notification = await Notification.findByIdAndUpdate(
-        id,
-        { status },
-        { new: true, runValidators: true }
-      ).populate('metadata.userId', 'email username firstName lastName');
-
-      if (!notification) {
+      // Get old status before update
+      const oldNotification = await Notification.findById(id);
+      if (!oldNotification) {
         return res.status(404).json({
           success: false,
           message: 'Notification not found'
         });
       }
 
+      const oldStatus = oldNotification.status;
+
+      const notification = await Notification.findByIdAndUpdate(
+        id,
+        { status },
+        { new: true, runValidators: true }
+      ).populate('metadata.userId', 'email username firstName lastName');
+
       // Invalidate cache after update
       invalidateCache();
 
       // Create audit log
       await createAuditLog(req, res, {
-        action: 'notification_update',
+        action: 'notification_status_updated',
         resourceType: 'notification',
         resourceId: notification._id.toString(),
         resourceName: notification.action,
         changes: {
-          before: { status: id.status },
+          before: { status: oldStatus },
           after: { status: notification.status }
         },
-        description: `Updated notification status to ${status}`
+        description: `Updated notification status from ${oldStatus} to ${status}`
       });
 
       // Invalidate audit cache
@@ -223,7 +227,7 @@ class NotificationController {
 
       // Create audit log
       await createAuditLog(req, res, {
-        action: 'notification_bulk_update',
+        action: 'notifications_marked_all_read',
         resourceType: 'notification',
         description: `Marked ${result.modifiedCount} notifications as read`
       });
@@ -302,7 +306,7 @@ class NotificationController {
 
       // Create audit log
       await createAuditLog(req, res, {
-        action: 'notification_bulk_delete',
+        action: 'notifications_deleted_all_read',
         resourceType: 'notification',
         description: `Deleted ${result.deletedCount} read notifications`
       });

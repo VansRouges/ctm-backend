@@ -1,4 +1,6 @@
 import AdminEmail from '../model/admin-email.model.js';
+import { createAuditLog } from '../utils/auditHelper.js';
+import { invalidateAuditCache } from './audit-log.controller.js';
 
 class AdminEmailController {
   // Get all admin emails
@@ -45,6 +47,18 @@ class AdminEmailController {
 
       const savedAdminEmail = await adminEmail.save();
 
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'admin_email_created',
+        resourceType: 'admin_email',
+        resourceId: savedAdminEmail._id.toString(),
+        resourceName: savedAdminEmail.subject,
+        description: `Created admin email: ${savedAdminEmail.subject} (${savedAdminEmail.from} → ${savedAdminEmail.to})`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
       res.status(201).json({
         success: true,
         message: 'Admin email created successfully',
@@ -66,6 +80,15 @@ class AdminEmailController {
       const { id } = req.params;
       const { from, to, subject, message, status, email_id } = req.body;
 
+      // Get old data before update
+      const oldAdminEmail = await AdminEmail.findById(id);
+      if (!oldAdminEmail) {
+        return res.status(404).json({
+          success: false,
+          message: 'Admin email not found'
+        });
+      }
+
       const updatedAdminEmail = await AdminEmail.findByIdAndUpdate(
         id,
         {
@@ -82,12 +105,21 @@ class AdminEmailController {
         }
       );
 
-      if (!updatedAdminEmail) {
-        return res.status(404).json({
-          success: false,
-          message: 'Admin email not found'
-        });
-      }
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'admin_email_updated',
+        resourceType: 'admin_email',
+        resourceId: updatedAdminEmail._id.toString(),
+        resourceName: updatedAdminEmail.subject,
+        changes: {
+          before: oldAdminEmail.toObject(),
+          after: updatedAdminEmail.toObject()
+        },
+        description: `Updated admin email: ${updatedAdminEmail.subject}`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
 
       res.json({
         success: true,
@@ -117,6 +149,18 @@ class AdminEmailController {
           message: 'Admin email not found'
         });
       }
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'admin_email_deleted',
+        resourceType: 'admin_email',
+        resourceId: deletedAdminEmail._id.toString(),
+        resourceName: deletedAdminEmail.subject,
+        description: `Deleted admin email: ${deletedAdminEmail.subject} (${deletedAdminEmail.from} → ${deletedAdminEmail.to})`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
 
       res.json({
         success: true,

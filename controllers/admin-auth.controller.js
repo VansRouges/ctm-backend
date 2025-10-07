@@ -75,23 +75,17 @@ class AdminAuthController {
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
       });
 
-      // Create a temporary request object for audit logging
-      const auditReq = {
-        admin: {
-          id: ADMIN_CREDENTIALS.id,
-          username: ADMIN_CREDENTIALS.username,
-          email: ADMIN_CREDENTIALS.email
-        },
-        ip: req.ip,
-        headers: req.headers,
-        method: req.method,
-        originalUrl: req.originalUrl
+      // Set admin info in request for audit logging
+      req.admin = {
+        id: ADMIN_CREDENTIALS.id,
+        username: ADMIN_CREDENTIALS.username,
+        email: ADMIN_CREDENTIALS.email
       };
 
       // Create audit log for admin login
-      await createAuditLog(auditReq, res, {
+      await createAuditLog(req, res, {
         action: 'admin_login',
-        resourceType: 'admin',
+        resourceType: 'auth',
         description: `Admin ${ADMIN_CREDENTIALS.username} logged in successfully`
       });
 

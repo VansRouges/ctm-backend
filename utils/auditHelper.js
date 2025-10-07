@@ -2,31 +2,50 @@ import AuditLog from '../model/audit-log.model.js';
 
 /**
  * Create an audit log entry
+ * @param {Object} req - Express request object (with admin info)
+ * @param {Object} res - Express response object
  * @param {Object} options - Audit log options
- * @param {Object} options.admin - Admin user info {id, username, email}
  * @param {string} options.action - Action performed
- * @param {Object} options.resource - Resource info {type, id, name}
+ * @param {string} options.resourceType - Resource type
+ * @param {string} options.resourceId - Resource ID (optional)
+ * @param {string} options.resourceName - Resource name (optional)
  * @param {string} options.description - Human-readable description
- * @param {Object} options.changes - Before/after values
- * @param {Object} options.metadata - Additional metadata (IP, user agent, etc.)
+ * @param {Object} options.changes - Before/after values (optional)
  * @returns {Promise<AuditLog>} Created audit log
  */
-export const createAuditLog = async (options) => {
+export const createAuditLog = async (req, res, options) => {
   try {
     const {
-      admin,
       action,
-      resource,
+      resourceType,
+      resourceId,
+      resourceName,
       description,
-      changes = {},
-      metadata = {}
+      changes = {}
     } = options;
 
     // Validate required fields
-    if (!admin || !action || !resource || !description) {
-      console.error('Missing required fields for audit log');
+    if (!action || !resourceType || !description) {
+      console.error('Missing required fields for audit log:', { action, resourceType, description });
       return null;
     }
+
+    // Get admin info from request
+    const admin = getAdminFromRequest(req);
+    if (!admin) {
+      console.error('No admin info found in request');
+      return null;
+    }
+
+    // Get metadata from request
+    const metadata = getMetadataFromRequest(req, res.statusCode || 200);
+
+    // Build resource object
+    const resource = {
+      type: resourceType,
+      ...(resourceId && { id: resourceId }),
+      ...(resourceName && { name: resourceName })
+    };
 
     // Create audit log
     const auditLog = await AuditLog.create({
@@ -34,14 +53,16 @@ export const createAuditLog = async (options) => {
       action,
       resource,
       description,
-      changes,
+      ...(Object.keys(changes).length > 0 && { changes }),
       metadata
     });
 
-    console.log(`📋 Audit log created: ${admin.username} - ${action}`);
+    console.log(`📋 Audit log created: ${admin.username} - ${action} - ${description}`);
     return auditLog;
   } catch (error) {
     console.error('Failed to create audit log:', error);
+    console.error('Request admin:', req.admin);
+    console.error('Options:', options);
     // Don't throw error to avoid breaking the main operation
     return null;
   }
@@ -71,8 +92,8 @@ export const getAdminFromRequest = (req) => {
  */
 export const getMetadataFromRequest = (req, statusCode = 200) => {
   return {
-    ipAddress: req.ip || req.connection.remoteAddress,
-    userAgent: req.get('user-agent'),
+    ipAddress: req.ip || req.connection?.remoteAddress || 'unknown',
+    userAgent: req.get('user-agent') || 'unknown',
     statusCode,
     method: req.method,
     endpoint: req.originalUrl || req.url

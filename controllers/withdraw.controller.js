@@ -3,6 +3,8 @@ import { validateUserExists, validateBodyUser } from '../utils/userValidation.js
 import User from '../model/user.model.js';
 import { getTokenPrice } from '../utils/priceService.js';
 import { createNotification } from '../utils/notificationHelper.js';
+import { createAuditLog } from '../utils/auditHelper.js';
+import { invalidateAuditCache } from './audit-log.controller.js';
 import mongoose from 'mongoose';
 
 class WithdrawController {
@@ -199,6 +201,35 @@ class WithdrawController {
       } else {
         await existing.save();
       }
+
+      // Create audit log for withdraw update
+      const statusChanged = prevStatus !== existing.status;
+      const actionType = statusChanged ? 'withdraw_status_changed' : 'withdraw_updated';
+      
+      await createAuditLog(req, res, {
+        action: actionType,
+        resourceType: 'withdraw',
+        resourceId: existing._id.toString(),
+        resourceName: `${existing.token_name} withdrawal - ${existing.amount}`,
+        changes: {
+          before: { 
+            status: prevStatus,
+            amount: req.body.amount !== undefined ? (existing.amount - (req.body.amount - existing.amount)) : existing.amount,
+            token_name: req.body.token_name ? (existing.token_name === req.body.token_name ? existing.token_name : 'changed') : existing.token_name
+          },
+          after: { 
+            status: existing.status,
+            amount: existing.amount,
+            token_name: existing.token_name
+          }
+        },
+        description: statusChanged ? 
+          `Withdrawal status changed from ${prevStatus} to ${existing.status} for ${existing.token_name} ${existing.amount}` :
+          `Updated withdrawal: ${existing.token_name} ${existing.amount}`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
 
       res.json({
         success: true,
