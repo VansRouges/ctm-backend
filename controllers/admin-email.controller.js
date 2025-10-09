@@ -1,12 +1,32 @@
 import AdminEmail from '../model/admin-email.model.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
+import logger from '../utils/logger.js';
 
 class AdminEmailController {
   // Get all admin emails
   static async getAllAdminEmails(req, res) {
     try {
+      logger.info('📧 Fetching all admin emails', {
+        adminUsername: req.admin?.username
+      });
+
       const adminEmails = await AdminEmail.find().sort({ createdAt: -1 });
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'admin_emails_view_all',
+        resourceType: 'admin_email',
+        description: `Admin ${req.admin?.username || 'unknown'} viewed all admin emails (${adminEmails.length} emails)`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
+      logger.info('✅ Admin emails retrieved successfully', {
+        adminUsername: req.admin?.username,
+        count: adminEmails.length
+      });
       
       res.json({
         success: true,
@@ -14,6 +34,10 @@ class AdminEmailController {
         count: adminEmails.length
       });
     } catch (error) {
+      logger.error('❌ Error fetching admin emails', {
+        error: error.message,
+        adminId: req.admin?.id
+      });
       console.error('Error fetching admin emails:', error);
       res.status(500).json({
         success: false,
@@ -80,9 +104,19 @@ class AdminEmailController {
       const { id } = req.params;
       const { from, to, subject, message, status, email_id } = req.body;
 
+      logger.info('📝 Updating admin email', {
+        emailId: id,
+        adminUsername: req.admin?.username,
+        updates: { subject, status, from, to }
+      });
+
       // Get old data before update
       const oldAdminEmail = await AdminEmail.findById(id);
       if (!oldAdminEmail) {
+        logger.warn('⚠️ Admin email not found', {
+          emailId: id,
+          adminUsername: req.admin?.username
+        });
         return res.status(404).json({
           success: false,
           message: 'Admin email not found'
@@ -121,12 +155,23 @@ class AdminEmailController {
       // Invalidate audit cache
       await invalidateAuditCache();
 
+      logger.info('✅ Admin email updated successfully', {
+        emailId: id,
+        adminUsername: req.admin?.username,
+        subject: updatedAdminEmail.subject
+      });
+
       res.json({
         success: true,
         message: 'Admin email updated successfully',
         data: updatedAdminEmail
       });
     } catch (error) {
+      logger.error('❌ Error updating admin email', {
+        error: error.message,
+        emailId: req.params.id,
+        adminId: req.admin?.id
+      });
       console.error('Error updating admin email:', error);
       res.status(500).json({
         success: false,
@@ -141,9 +186,18 @@ class AdminEmailController {
     try {
       const { id } = req.params;
 
+      logger.info('🗑️ Deleting admin email', {
+        emailId: id,
+        adminUsername: req.admin?.username
+      });
+
       const deletedAdminEmail = await AdminEmail.findByIdAndDelete(id);
 
       if (!deletedAdminEmail) {
+        logger.warn('⚠️ Admin email not found for deletion', {
+          emailId: id,
+          adminUsername: req.admin?.username
+        });
         return res.status(404).json({
           success: false,
           message: 'Admin email not found'
@@ -162,12 +216,23 @@ class AdminEmailController {
       // Invalidate audit cache
       await invalidateAuditCache();
 
+      logger.info('✅ Admin email deleted successfully', {
+        emailId: id,
+        adminUsername: req.admin?.username,
+        subject: deletedAdminEmail.subject
+      });
+
       res.json({
         success: true,
         message: 'Admin email deleted successfully',
         data: deletedAdminEmail
       });
     } catch (error) {
+      logger.error('❌ Error deleting admin email', {
+        error: error.message,
+        emailId: req.params.id,
+        adminId: req.admin?.id
+      });
       console.error('Error deleting admin email:', error);
       res.status(500).json({
         success: false,

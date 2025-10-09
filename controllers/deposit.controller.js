@@ -5,6 +5,7 @@ import { getTokenPrice } from '../utils/priceService.js';
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
+import logger from '../utils/logger.js';
 import mongoose from 'mongoose';
 
 class DepositController {
@@ -38,9 +39,28 @@ class DepositController {
   // Get all deposits (admin only)
   static async getAllDeposits(req, res) {
     try {
+      logger.info('💰 Fetching all deposits', {
+        adminUsername: req.admin?.username
+      });
+
       const deposits = await Transaction.find({ 
         isDeposit: true 
       }).sort({ createdAt: -1 });
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'deposits_view_all',
+        resourceType: 'deposit',
+        description: `Admin ${req.admin?.username || 'unknown'} viewed all deposits (${deposits.length} deposits)`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
+      logger.info('✅ Deposits retrieved successfully', {
+        adminUsername: req.admin?.username,
+        count: deposits.length
+      });
       
       res.json({
         success: true,
@@ -48,6 +68,10 @@ class DepositController {
         count: deposits.length
       });
     } catch (error) {
+      logger.error('❌ Error fetching deposits', {
+        error: error.message,
+        adminId: req.admin?.id
+      });
       console.error('Error fetching all deposits:', error);
       res.status(500).json({
         success: false,
@@ -119,11 +143,21 @@ class DepositController {
       const { id } = req.params;
       const updateData = { ...req.body };
 
+      logger.info('📝 Updating deposit', {
+        depositId: id,
+        adminUsername: req.admin?.username,
+        updates: Object.keys(updateData)
+      });
+
       // Ensure this remains a deposit
       updateData.isDeposit = true;
       updateData.isWithdraw = false;
       const existing = await Transaction.findOne({ _id: id, isDeposit: true });
       if (!existing) {
+        logger.warn('⚠️ Deposit not found', {
+          depositId: id,
+          adminUsername: req.admin?.username
+        });
         return res.status(404).json({ success: false, message: 'Deposit not found' });
       }
 
@@ -134,6 +168,11 @@ class DepositController {
         const amountChange = updateData.amount !== undefined && updateData.amount !== existing.amount;
         const tokenChange = updateData.token_name && updateData.token_name !== existing.token_name;
         if (amountChange || tokenChange) {
+          logger.warn('⚠️ Cannot modify approved deposit', {
+            depositId: id,
+            adminUsername: req.admin?.username,
+            currentStatus: prevStatus
+          });
           return res.status(400).json({ success: false, message: 'Cannot modify amount or token_name after approval' });
         }
       }
@@ -149,6 +188,13 @@ class DepositController {
       const approving = prevStatus !== 'approved' && existing.status === 'approved';
 
       if (approving) {
+        logger.info('✅ Approving deposit', {
+          depositId: id,
+          adminUsername: req.admin?.username,
+          amount: existing.amount,
+          token: existing.token_name
+        });
+
         const session = await mongoose.startSession();
         try {
           await session.withTransaction(async () => {
@@ -164,19 +210,43 @@ class DepositController {
               existing.approvedAt = new Date();
             }
 
-            userDoc.totalInvestment = Number(((userDoc.totalInvestment || 0) + usdValue).toFixed(8));
+            const previousBalance = userDoc.totalInvestment || 0;
+            userDoc.totalInvestment = Number((previousBalance + usdValue).toFixed(8));
             await userDoc.save({ session });
             await existing.save({ session });
             existing.usdValue = usdValue;
+
+            logger.info('💰 Deposit approved and funds added', {
+              depositId: id,
+              adminUsername: req.admin?.username,
+              usdValueAdded: usdValue,
+              previousBalance,
+              newBalance: userDoc.totalInvestment
+            });
           });
         } catch (err) {
           session.endSession();
           if (err.message === 'USER_NOT_FOUND') {
+            logger.error('❌ User not found for deposit approval', {
+              depositId: id,
+              userId: existing.user,
+              adminUsername: req.admin?.username
+            });
             return res.status(404).json({ success: false, message: 'User not found for transaction' });
           }
           if (err.response || err.message?.toLowerCase().includes('price')) {
+            logger.error('❌ Price service error during deposit approval', {
+              error: err.message,
+              depositId: id,
+              token: existing.token_name
+            });
             return res.status(502).json({ success: false, message: 'Failed to fetch token price', error: err.message });
           }
+          logger.error('❌ Transaction error during deposit approval', {
+            error: err.message,
+            depositId: id,
+            adminUsername: req.admin?.username
+          });
           return res.status(500).json({ success: false, message: 'Failed during approval transaction', error: err.message });
         } finally {
           session.endSession();
@@ -214,6 +284,14 @@ class DepositController {
       // Invalidate audit cache
       await invalidateAuditCache();
 
+      logger.info('✅ Deposit updated successfully', {
+        depositId: id,
+        adminUsername: req.admin?.username,
+        newStatus: existing.status,
+        tokenName: existing.token_name,
+        amount: existing.amount
+      });
+
       return res.json({
         success: true,
         message: 'Deposit updated successfully',
@@ -221,6 +299,11 @@ class DepositController {
         ...(existing.usdValue ? { usdValueAdded: existing.usdValue } : {})
       });
     } catch (error) {
+      logger.error('❌ Error updating deposit', {
+        error: error.message,
+        depositId: req.params.id,
+        adminId: req.admin?.id
+      });
       console.error('Error updating deposit:', error);
       res.status(500).json({
         success: false,
@@ -235,17 +318,53 @@ class DepositController {
     try {
       const { id } = req.params;
 
-      const deletedDeposit = await Transaction.findOneAndDelete({
+      logger.info('🗑️ Deleting deposit', {
+        depositId: id,
+        adminUsername: req.admin?.username
+      });
+
+      // Get deposit data before deletion for audit
+      const depositToDelete = await Transaction.findOne({
         _id: id,
         isDeposit: true
       });
 
-      if (!deletedDeposit) {
+      if (!depositToDelete) {
+        logger.warn('⚠️ Deposit not found for deletion', {
+          depositId: id,
+          adminUsername: req.admin?.username
+        });
         return res.status(404).json({
           success: false,
           message: 'Deposit not found'
         });
       }
+
+      const deletedDeposit = await Transaction.findOneAndDelete({
+        _id: id,
+        isDeposit: true
+      });
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'deposit_deleted',
+        resourceType: 'deposit',
+        resourceId: id,
+        resourceName: `${depositToDelete.token_name} deposit - ${depositToDelete.amount}`,
+        deletedData: depositToDelete.toObject(),
+        description: `Deleted deposit: ${depositToDelete.token_name} ${depositToDelete.amount} (Status: ${depositToDelete.status})`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
+      logger.info('✅ Deposit deleted successfully', {
+        depositId: id,
+        adminUsername: req.admin?.username,
+        tokenName: depositToDelete.token_name,
+        amount: depositToDelete.amount,
+        status: depositToDelete.status
+      });
 
       res.json({
         success: true,
@@ -253,6 +372,11 @@ class DepositController {
         data: deletedDeposit
       });
     } catch (error) {
+      logger.error('❌ Error deleting deposit', {
+        error: error.message,
+        depositId: req.params.id,
+        adminId: req.admin?.id
+      });
       console.error('Error deleting deposit:', error);
       res.status(500).json({
         success: false,

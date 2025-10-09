@@ -60,8 +60,8 @@ const copytradePurchaseSchema = new mongoose.Schema({
   trade_status: { 
       type: String, 
       trim: true, 
-      default: 'active', 
-      enum: ['active', 'completed', 'cancelled'], 
+      default: 'pending', 
+      enum: ['pending', 'active', 'completed', 'cancelled'], 
       index: true 
   },
   trade_win_rate: { 

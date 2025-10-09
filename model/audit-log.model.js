@@ -19,43 +19,55 @@ const auditLogSchema = new mongoose.Schema(
         'admin_logout',
         
         // User Management
+        'users_view_all',
+        'user_updated',
         'user_deleted',
         
         // Deposits
+        'deposits_view_all',
         'deposit_updated',
         'deposit_deleted',
         'deposit_status_changed',
         
         // Withdrawals
+        'withdrawals_view_all',
         'withdraw_updated',
         'withdraw_deleted',
         'withdraw_status_changed',
         
         // Copytrading Options
+        'copytrading_options_view_all',
         'copytrading_option_created',
         'copytrading_option_updated',
         'copytrading_option_deleted',
         
         // Copytrade Purchases
+        'copytrade_purchase_view_all',
+        'copytrade_purchase_viewed',
         'copytrade_purchase_updated',
         'copytrade_purchase_deleted',
         
         // Crypto Options
+        'crypto_options_view_all',
         'crypto_option_created',
         'crypto_option_updated',
         'crypto_option_deleted',
         
         // User Support
+        'support_tickets_view_all',
         'support_ticket_updated',
         'support_ticket_deleted',
         
         // Admin Emails
+        'admin_emails_view_all',
         'admin_email_created',
         'admin_email_updated',
         'admin_email_deleted',
         
         // Notifications
+        'notifications_view_all',
         'notification_status_updated',
+        'notifications_unread_count_viewed',
         'notification_deleted',
         'notifications_marked_all_read',
         'notifications_deleted_all_read',

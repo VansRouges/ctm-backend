@@ -1,4 +1,5 @@
 import AuditLog from '../model/audit-log.model.js';
+import logger from './logger.js';
 
 /**
  * Create an audit log entry
@@ -15,6 +16,15 @@ import AuditLog from '../model/audit-log.model.js';
  */
 export const createAuditLog = async (req, res, options) => {
   try {
+    // logger.info('📋 Creating audit log', {
+    //   action: options?.action,
+    //   resourceType: options?.resourceType,
+    //   endpoint: req.originalUrl || req.url,
+    //   method: req.method,
+    //   adminId: req.admin?.id,
+    //   adminUsername: req.admin?.username
+    // });
+
     const {
       action,
       resourceType,
@@ -26,14 +36,62 @@ export const createAuditLog = async (req, res, options) => {
 
     // Validate required fields
     if (!action || !resourceType || !description) {
-      console.error('Missing required fields for audit log:', { action, resourceType, description });
+      logger.error('❌ Missing required fields for audit log', { 
+        action, 
+        resourceType, 
+        description,
+        endpoint: req.originalUrl || req.url
+      });
       return null;
     }
 
     // Get admin info from request
     const admin = getAdminFromRequest(req);
     if (!admin) {
-      console.error('No admin info found in request');
+      // For logout scenarios, try to create a basic admin entry from IP and metadata
+      if (action === 'admin_logout_anonymous') {
+        logger.warn('⚠️ Creating anonymous logout audit log');
+        const anonymousAdmin = {
+          id: 'anonymous',
+          username: 'unknown_admin',
+          email: 'unknown@ctm.com'
+        };
+        
+        // Get metadata from request
+        const metadata = getMetadataFromRequest(req, res.statusCode || 200);
+
+        // Build resource object
+        const resource = {
+          type: resourceType,
+          ...(resourceId && { id: resourceId }),
+          ...(resourceName && { name: resourceName })
+        };
+
+        // Create audit log with anonymous admin
+        const auditLog = await AuditLog.create({
+          admin: anonymousAdmin,
+          action,
+          resource,
+          description,
+          ...(Object.keys(changes).length > 0 && { changes }),
+          metadata
+        });
+
+        logger.info('✅ Anonymous audit log created', {
+          auditLogId: auditLog._id,
+          action,
+          ipAddress: metadata.ipAddress
+        });
+
+        console.log(`📋 Audit log created: ${anonymousAdmin.username} - ${action} - ${description}`);
+        return auditLog;
+      }
+
+      logger.error('❌ No admin info found in request', {
+        endpoint: req.originalUrl || req.url,
+        hasAdmin: !!req.admin,
+        adminKeys: req.admin ? Object.keys(req.admin) : []
+      });
       return null;
     }
 
@@ -57,9 +115,25 @@ export const createAuditLog = async (req, res, options) => {
       metadata
     });
 
+    // logger.info('✅ Audit log created successfully', {
+    //   auditLogId: auditLog._id,
+    //   admin: admin.username,
+    //   action,
+    //   resourceType,
+    //   description,
+    //   endpoint: req.originalUrl || req.url
+    // });
+
     console.log(`📋 Audit log created: ${admin.username} - ${action} - ${description}`);
     return auditLog;
   } catch (error) {
+    logger.error('❌ Failed to create audit log', {
+      error: error.message,
+      stack: error.stack,
+      endpoint: req.originalUrl || req.url,
+      adminId: req.admin?.id,
+      options
+    });
     console.error('Failed to create audit log:', error);
     console.error('Request admin:', req.admin);
     console.error('Options:', options);
@@ -74,13 +148,33 @@ export const createAuditLog = async (req, res, options) => {
  * @returns {Object} Admin info {id, username, email}
  */
 export const getAdminFromRequest = (req) => {
+  // logger.debug('🔍 Extracting admin from request', {
+  //   endpoint: req.originalUrl || req.url,
+  //   hasAdmin: !!req.admin,
+  //   adminId: req.admin?.id,
+  //   adminUsername: req.admin?.username
+  // });
+
   if (req.admin) {
-    return {
+    const adminInfo = {
       id: req.admin.id,
       username: req.admin.username,
       email: req.admin.email
     };
+    
+    // logger.debug('✅ Admin extracted successfully', {
+    //   adminInfo,
+    //   endpoint: req.originalUrl || req.url
+    // });
+    
+    return adminInfo;
   }
+  
+  logger.warn('⚠️ No admin found in request', {
+    endpoint: req.originalUrl || req.url,
+    reqKeys: Object.keys(req)
+  });
+  
   return null;
 };
 
@@ -91,13 +185,20 @@ export const getAdminFromRequest = (req) => {
  * @returns {Object} Metadata object
  */
 export const getMetadataFromRequest = (req, statusCode = 200) => {
-  return {
+  const metadata = {
     ipAddress: req.ip || req.connection?.remoteAddress || 'unknown',
     userAgent: req.get('user-agent') || 'unknown',
     statusCode,
     method: req.method,
     endpoint: req.originalUrl || req.url
   };
+
+  // logger.debug('📊 Metadata extracted from request', {
+  //   metadata,
+  //   endpoint: req.originalUrl || req.url
+  // });
+
+  return metadata;
 };
 
 export default {

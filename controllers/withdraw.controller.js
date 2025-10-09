@@ -5,6 +5,7 @@ import { getTokenPrice } from '../utils/priceService.js';
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
+import logger from '../utils/logger.js';
 import mongoose from 'mongoose';
 
 class WithdrawController {
@@ -41,9 +42,28 @@ class WithdrawController {
   // Get all withdraws (admin only)
   static async getAllWithdraws(req, res) {
     try {
+      logger.info('💸 Fetching all withdrawals', {
+        adminUsername: req.admin?.username
+      });
+
       const withdraws = await Transaction.find({ 
         isWithdraw: true 
       }).sort({ createdAt: -1 });
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'withdrawals_view_all',
+        resourceType: 'withdraw',
+        description: `Admin ${req.admin?.username || 'unknown'} viewed all withdrawals (${withdraws.length} withdrawals)`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
+      logger.info('✅ Withdrawals retrieved successfully', {
+        adminUsername: req.admin?.username,
+        count: withdraws.length
+      });
       
       res.json({
         success: true,
@@ -51,6 +71,10 @@ class WithdrawController {
         count: withdraws.length
       });
     } catch (error) {
+      logger.error('❌ Error fetching withdrawals', {
+        error: error.message,
+        adminId: req.admin?.id
+      });
       console.error('Error fetching all withdraws:', error);
       res.status(500).json({
         success: false,
@@ -122,12 +146,22 @@ class WithdrawController {
       const { id } = req.params;
       const updateData = { ...req.body };
 
+      logger.info('📝 Updating withdrawal', {
+        withdrawalId: id,
+        adminUsername: req.admin?.username,
+        updates: Object.keys(updateData)
+      });
+
       // Force flags
       updateData.isWithdraw = true;
       updateData.isDeposit = false;
 
       const existing = await Transaction.findOne({ _id: id, isWithdraw: true });
       if (!existing) {
+        logger.warn('⚠️ Withdrawal not found', {
+          withdrawalId: id,
+          adminUsername: req.admin?.username
+        });
         return res.status(404).json({ success: false, message: 'Withdraw not found' });
       }
 
@@ -135,6 +169,11 @@ class WithdrawController {
       if (updateData.user) {
         const validation = await validateBodyUser(updateData.user);
         if (!validation.ok) {
+          logger.warn('⚠️ User validation failed', {
+            userId: updateData.user,
+            error: validation.message,
+            adminUsername: req.admin?.username
+          });
           return res.status(validation.status).json({ success: false, message: validation.message });
         }
       }
@@ -146,6 +185,11 @@ class WithdrawController {
         const amountChange = updateData.amount !== undefined && updateData.amount !== existing.amount;
         const tokenChange = updateData.token_name && updateData.token_name !== existing.token_name;
         if (amountChange || tokenChange) {
+          logger.warn('⚠️ Cannot modify approved withdrawal', {
+            withdrawalId: id,
+            adminUsername: req.admin?.username,
+            currentStatus: prevStatus
+          });
           return res.status(400).json({ success: false, message: 'Cannot modify amount or token_name after approval' });
         }
       }
@@ -161,6 +205,13 @@ class WithdrawController {
       const approving = prevStatus !== 'approved' && existing.status === 'approved';
 
       if (approving) {
+        logger.info('✅ Approving withdrawal', {
+          withdrawalId: id,
+          adminUsername: req.admin?.username,
+          amount: existing.amount,
+          token: existing.token_name
+        });
+
         const session = await mongoose.startSession();
         try {
           await session.withTransaction(async () => {
@@ -182,18 +233,46 @@ class WithdrawController {
             await userDoc.save({ session });
             await existing.save({ session });
             existing.usdValue = usdValue;
+
+            logger.info('💰 Withdrawal approved and funds deducted', {
+              withdrawalId: id,
+              adminUsername: req.admin?.username,
+              usdValueDeducted: usdValue,
+              remainingBalance: userDoc.totalInvestment
+            });
           });
         } catch (err) {
           session.endSession();
           if (err.message === 'USER_NOT_FOUND') {
+            logger.error('❌ User not found for withdrawal approval', {
+              withdrawalId: id,
+              userId: existing.user,
+              adminUsername: req.admin?.username
+            });
             return res.status(404).json({ success: false, message: 'User not found for transaction' });
           }
           if (err.message === 'INSUFFICIENT_FUNDS') {
+            logger.error('❌ Insufficient funds for withdrawal approval', {
+              withdrawalId: id,
+              adminUsername: req.admin?.username,
+              requestedAmount: existing.amount,
+              token: existing.token_name
+            });
             return res.status(400).json({ success: false, message: 'Insufficient totalInvestment to approve this withdraw' });
           }
           if (err.response || err.message?.toLowerCase().includes('price')) {
+            logger.error('❌ Price service error during withdrawal approval', {
+              error: err.message,
+              withdrawalId: id,
+              token: existing.token_name
+            });
             return res.status(502).json({ success: false, message: 'Failed to fetch token price', error: err.message });
           }
+          logger.error('❌ Transaction error during withdrawal approval', {
+            error: err.message,
+            withdrawalId: id,
+            adminUsername: req.admin?.username
+          });
           return res.status(500).json({ success: false, message: 'Failed during approval transaction', error: err.message });
         } finally {
           session.endSession();
@@ -231,6 +310,14 @@ class WithdrawController {
       // Invalidate audit cache
       await invalidateAuditCache();
 
+      logger.info('✅ Withdrawal updated successfully', {
+        withdrawalId: id,
+        adminUsername: req.admin?.username,
+        newStatus: existing.status,
+        tokenName: existing.token_name,
+        amount: existing.amount
+      });
+
       res.json({
         success: true,
         message: 'Withdraw updated successfully',
@@ -238,6 +325,11 @@ class WithdrawController {
         ...(existing.usdValue ? { usdValueDeducted: existing.usdValue } : {})
       });
     } catch (error) {
+      logger.error('❌ Error updating withdrawal', {
+        error: error.message,
+        withdrawalId: req.params.id,
+        adminId: req.admin?.id
+      });
       console.error('Error updating withdraw:', error);
       res.status(500).json({
         success: false,
@@ -252,17 +344,53 @@ class WithdrawController {
     try {
       const { id } = req.params;
 
-      const deletedWithdraw = await Transaction.findOneAndDelete({
+      logger.info('🗑️ Deleting withdrawal', {
+        withdrawalId: id,
+        adminUsername: req.admin?.username
+      });
+
+      // Get withdrawal data before deletion for audit
+      const withdrawToDelete = await Transaction.findOne({
         _id: id,
         isWithdraw: true
       });
 
-      if (!deletedWithdraw) {
+      if (!withdrawToDelete) {
+        logger.warn('⚠️ Withdrawal not found for deletion', {
+          withdrawalId: id,
+          adminUsername: req.admin?.username
+        });
         return res.status(404).json({
           success: false,
           message: 'Withdraw not found'
         });
       }
+
+      const deletedWithdraw = await Transaction.findOneAndDelete({
+        _id: id,
+        isWithdraw: true
+      });
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'withdraw_deleted',
+        resourceType: 'withdraw',
+        resourceId: id,
+        resourceName: `${withdrawToDelete.token_name} withdrawal - ${withdrawToDelete.amount}`,
+        deletedData: withdrawToDelete.toObject(),
+        description: `Deleted withdrawal: ${withdrawToDelete.token_name} ${withdrawToDelete.amount} (Status: ${withdrawToDelete.status})`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
+      logger.info('✅ Withdrawal deleted successfully', {
+        withdrawalId: id,
+        adminUsername: req.admin?.username,
+        tokenName: withdrawToDelete.token_name,
+        amount: withdrawToDelete.amount,
+        status: withdrawToDelete.status
+      });
 
       res.json({
         success: true,
@@ -270,6 +398,11 @@ class WithdrawController {
         data: deletedWithdraw
       });
     } catch (error) {
+      logger.error('❌ Error deleting withdrawal', {
+        error: error.message,
+        withdrawalId: req.params.id,
+        adminId: req.admin?.id
+      });
       console.error('Error deleting withdraw:', error);
       res.status(500).json({
         success: false,

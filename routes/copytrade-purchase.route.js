@@ -8,7 +8,7 @@ router.post('/', CopytradePurchaseController.createCopytradePurchase);
 router.get('/', requireAdminAuth, CopytradePurchaseController.getAllCopytradePurchases);  // Admin only - get all purchases
 router.get('/user/:userId', CopytradePurchaseController.getCopytradePurchasesByUser);
 router.get('/:id', CopytradePurchaseController.getCopytradePurchaseById);
-router.put('/:id', CopytradePurchaseController.updateCopytradePurchase);
+router.put('/:id', requireAdminAuth, CopytradePurchaseController.updateCopytradePurchase);
 router.delete('/:id', requireAdminAuth, CopytradePurchaseController.deleteCopytradePurchase);  // Admin only
 
 export default router;

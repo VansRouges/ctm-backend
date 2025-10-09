@@ -37,6 +37,12 @@ try {
     hasErrors = true;
   }
 
+  if (appContent.includes('// const stockUpdater = new StockUpdater();') || 
+      !appContent.includes('const stockUpdater = new StockUpdater();')) {
+    console.error('❌ app.js: StockUpdater instantiation is disabled');
+    hasErrors = true;
+  }
+
   if (!appContent.includes("app.post('/api/admin/update-stocks'") ||
       appContent.includes('/*\napp.post')) {
     console.error('❌ app.js: Manual stock update endpoint is disabled');

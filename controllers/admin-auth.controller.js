@@ -3,6 +3,7 @@ import { generateAdminToken } from '../middlewares/auth.middleware.js';
 import redisClient from '../config/redis.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
+import logger from '../utils/logger.js';
 
 // Helper function to add token to blacklist using Redis
 const blacklistToken = async (token) => {
@@ -27,8 +28,14 @@ class AdminAuthController {
     try {
       const { username, password } = req.body;
 
+      // logger.info('🔐 Admin login attempt', {
+      //   username,
+      //   ipAddress: req.ip
+      // });
+
       // Validate required fields
       if (!username || !password) {
+        logger.warn('⚠️ Admin login failed - missing credentials');
         return res.status(400).json({
           success: false,
           message: 'Username and password are required'
@@ -45,6 +52,7 @@ class AdminAuthController {
 
       // Check username
       if (username !== ADMIN_CREDENTIALS.username) {
+        logger.warn('⚠️ Admin login failed - invalid username');
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
@@ -54,6 +62,7 @@ class AdminAuthController {
       // Verify password
       const isValidPassword = await bcrypt.compare(password, ADMIN_CREDENTIALS.password);
       if (!isValidPassword) {
+        logger.warn('⚠️ Admin login failed - invalid password');
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
@@ -92,6 +101,12 @@ class AdminAuthController {
       // Invalidate audit cache
       await invalidateAuditCache();
 
+      // logger.info('✅ Admin login successful', {
+      //   adminId: ADMIN_CREDENTIALS.id,
+      //   adminUsername: ADMIN_CREDENTIALS.username,
+      //   ipAddress: req.ip
+      // });
+
       res.json({
         success: true,
         message: 'Login successful',
@@ -107,6 +122,10 @@ class AdminAuthController {
         }
       });
     } catch (error) {
+      logger.error('❌ Admin login error', {
+        error: error.message,
+        username: req.body?.username
+      });
       console.error('Admin login error:', error);
       res.status(500).json({
         success: false,
@@ -119,6 +138,18 @@ class AdminAuthController {
   // Admin logout endpoint
   static async adminLogout(req, res) {
     try {
+      // Capture admin info early before any token processing
+      const adminInfo = req.admin ? {
+        id: req.admin.id,
+        username: req.admin.username,
+        email: req.admin.email
+      } : null;
+
+      logger.info('🚪 Admin logout attempt', {
+        adminUsername: adminInfo?.username || 'unknown',
+        ipAddress: req.ip
+      });
+
       // Get token from Authorization header or cookie
       const authHeader = req.headers.authorization;
       const cookieToken = req.cookies?.admin_token;
@@ -133,22 +164,46 @@ class AdminAuthController {
       // Add token to blacklist if present
       if (token) {
         await blacklistToken(token);
+        logger.debug('🔒 Token blacklisted successfully');
+      } else {
+        logger.warn('⚠️ No token found during logout');
       }
 
       // Clear cookie
       res.clearCookie('admin_token');
 
-      // Create audit log for admin logout
-      if (req.admin) {
+      // Create audit log for admin logout - use captured admin info or create a basic entry
+      if (adminInfo) {
+        // Set req.admin to ensure audit helper works
+        req.admin = adminInfo;
+        
         await createAuditLog(req, res, {
           action: 'admin_logout',
-          resourceType: 'admin',
-          description: `Admin ${req.admin.username} logged out`
+          resourceType: 'auth',
+          description: `Admin ${adminInfo.username} logged out`
         });
-
-        // Invalidate audit cache
-        await invalidateAuditCache();
+      } else {
+        // Create audit log manually without req.admin
+        logger.info('📋 Creating logout audit without admin context', {
+          hasToken: !!token,
+          ipAddress: req.ip
+        });
+        
+        await createAuditLog(req, res, {
+          action: 'admin_logout_anonymous',
+          resourceType: 'auth',
+          description: 'Admin logout attempt without admin context'
+        });
       }
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
+      logger.info('✅ Admin logout successful', {
+        adminUsername: adminInfo?.username || 'unknown',
+        tokenBlacklisted: !!token,
+        ipAddress: req.ip
+      });
 
       res.json({
         success: true,
@@ -158,6 +213,10 @@ class AdminAuthController {
         }
       });
     } catch (error) {
+      logger.error('❌ Admin logout error', {
+        error: error.message,
+        adminId: req.admin?.id
+      });
       console.error('Admin logout error:', error);
       res.status(500).json({
         success: false,
@@ -170,6 +229,22 @@ class AdminAuthController {
   // Verify admin session endpoint
   static async verifyAdminSession(req, res) {
     try {
+      logger.info('🔐 Verifying admin session', {
+        adminUsername: req.admin?.username
+      });
+
+      // Create audit log for session verification
+      if (req.admin) {
+        await createAuditLog(req, res, {
+          action: 'admin_session_verify',
+          resourceType: 'auth',
+          description: `Admin ${req.admin.username} session verified successfully`
+        });
+
+        // Invalidate audit cache
+        await invalidateAuditCache();
+      }
+
       // If middleware passed, admin is authenticated
       res.json({
         success: true,
@@ -179,6 +254,10 @@ class AdminAuthController {
         }
       });
     } catch (error) {
+      logger.error('❌ Session verification error', {
+        error: error.message,
+        adminId: req.admin?.id
+      });
       console.error('Session verification error:', error);
       res.status(500).json({
         success: false,
@@ -193,7 +272,12 @@ class AdminAuthController {
     try {
       const { password } = req.body;
       
+      logger.info('🔒 Generating password hash', {
+        adminUsername: req.admin?.username
+      });
+      
       if (!password) {
+        logger.warn('⚠️ Password hash generation failed - no password provided');
         return res.status(400).json({
           success: false,
           message: 'Password is required'
@@ -201,6 +285,22 @@ class AdminAuthController {
       }
 
       const hash = await bcrypt.hash(password, 12);
+
+      // Create audit log for password hash generation
+      if (req.admin) {
+        await createAuditLog(req, res, {
+          action: 'admin_password_hash_generate',
+          resourceType: 'auth',
+          description: `Admin ${req.admin.username} generated password hash`
+        });
+
+        // Invalidate audit cache
+        await invalidateAuditCache();
+      }
+
+      logger.info('✅ Password hash generated successfully', {
+        adminUsername: req.admin?.username
+      });
       
       res.json({
         success: true,
@@ -210,6 +310,10 @@ class AdminAuthController {
         }
       });
     } catch (error) {
+      logger.error('❌ Password hash generation error', {
+        error: error.message,
+        adminId: req.admin?.id
+      });
       res.status(500).json({
         success: false,
         message: 'Hash generation failed',
@@ -221,6 +325,10 @@ class AdminAuthController {
   // Redis status endpoint (admin only)
   static async getRedisStatus(req, res) {
     try {
+      logger.info('📊 Checking Redis status', {
+        adminUsername: req.admin?.username
+      });
+
       const status = redisClient.getConnectionStatus();
       
       // Test Redis connectivity
@@ -238,6 +346,23 @@ class AdminAuthController {
         };
       }
 
+      // Create audit log for Redis status check
+      if (req.admin) {
+        await createAuditLog(req, res, {
+          action: 'admin_redis_status_check',
+          resourceType: 'system',
+          description: `Admin ${req.admin.username} checked Redis status - ${status.isConnected ? 'Connected' : 'Disconnected'}`
+        });
+
+        // Invalidate audit cache
+        await invalidateAuditCache();
+      }
+
+      logger.info('✅ Redis status retrieved successfully', {
+        adminUsername: req.admin?.username,
+        isConnected: status.isConnected
+      });
+
       res.json({
         success: true,
         data: {
@@ -248,6 +373,10 @@ class AdminAuthController {
         }
       });
     } catch (error) {
+      logger.error('❌ Redis status check error', {
+        error: error.message,
+        adminId: req.admin?.id
+      });
       console.error('Redis status check error:', error);
       res.status(500).json({
         success: false,

@@ -3,12 +3,32 @@ import { validateUserExists, validateBodyUser } from '../utils/userValidation.js
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
+import logger from '../utils/logger.js';
 
 class UserSupportController {
   // Get all user support tickets
   static async getAllUserSupport(req, res) {
     try {
+      logger.info('📋 Fetching all user support tickets', {
+        adminUsername: req.admin?.username
+      });
+
       const userSupport = await UserSupport.find().sort({ createdAt: -1 });
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'support_tickets_view_all',
+        resourceType: 'support_ticket',
+        description: `Admin ${req.admin?.username || 'unknown'} viewed all support tickets (${userSupport.length} tickets)`
+      });
+
+      // Invalidate audit cache
+      await invalidateAuditCache();
+
+      logger.info('✅ User support tickets retrieved successfully', {
+        adminUsername: req.admin?.username,
+        count: userSupport.length
+      });
       
       res.json({
         success: true,
@@ -16,6 +36,10 @@ class UserSupportController {
         count: userSupport.length
       });
     } catch (error) {
+      logger.error('❌ Error fetching user support tickets', {
+        error: error.message,
+        adminId: req.admin?.id
+      });
       console.error('Error fetching user support tickets:', error);
       res.status(500).json({
         success: false,
@@ -106,11 +130,21 @@ class UserSupportController {
       const { id } = req.params;
       const { user, full_name, priority, status, title, message, email } = req.body;
 
+      logger.info('📝 Updating user support ticket', {
+        ticketId: id,
+        adminUsername: req.admin?.username,
+        updates: { priority, status, title }
+      });
+
       // Validate enum values if provided
       const validPriorities = ['low', 'medium', 'high'];
       const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
 
       if (priority && !validPriorities.includes(priority)) {
+        logger.warn('⚠️ Invalid priority provided', {
+          providedPriority: priority,
+          validPriorities
+        });
         return res.status(400).json({
           success: false,
           message: `Invalid priority. Valid values: ${validPriorities.join(', ')}`
@@ -118,6 +152,10 @@ class UserSupportController {
       }
 
       if (status && !validStatuses.includes(status)) {
+        logger.warn('⚠️ Invalid status provided', {
+          providedStatus: status,
+          validStatuses
+        });
         return res.status(400).json({
           success: false,
           message: `Invalid status. Valid values: ${validStatuses.join(', ')}`
@@ -128,6 +166,10 @@ class UserSupportController {
       if (user) {
         const validation = await validateBodyUser(user);
         if (!validation.ok) {
+          logger.warn('⚠️ User validation failed', {
+            userId: user,
+            error: validation.message
+          });
           return res.status(validation.status).json({ success: false, message: validation.message });
         }
       }
@@ -135,6 +177,10 @@ class UserSupportController {
       // Get old data before update
       const oldData = await UserSupport.findById(id);
       if (!oldData) {
+        logger.warn('⚠️ Support ticket not found', {
+          ticketId: id,
+          adminUsername: req.admin?.username
+        });
         return res.status(404).json({
           success: false,
           message: 'User support ticket not found'
@@ -160,7 +206,7 @@ class UserSupportController {
 
       // Create audit log
       await createAuditLog(req, res, {
-        action: 'support_ticket_update',
+        action: 'support_ticket_updated',
         resourceType: 'support_ticket',
         resourceId: updatedUserSupport._id.toString(),
         resourceName: updatedUserSupport.title,
@@ -174,12 +220,23 @@ class UserSupportController {
       // Invalidate audit cache
       await invalidateAuditCache();
 
+      logger.info('✅ User support ticket updated successfully', {
+        ticketId: id,
+        adminUsername: req.admin?.username,
+        title: updatedUserSupport.title
+      });
+
       res.json({
         success: true,
         message: 'User support ticket updated successfully',
         data: updatedUserSupport
       });
     } catch (error) {
+      logger.error('❌ Error updating user support ticket', {
+        error: error.message,
+        ticketId: req.params.id,
+        adminId: req.admin?.id
+      });
       console.error('Error updating user support ticket:', error);
       res.status(500).json({
         success: false,
@@ -194,9 +251,18 @@ class UserSupportController {
     try {
       const { id } = req.params;
 
+      logger.info('🗑️ Deleting user support ticket', {
+        ticketId: id,
+        adminUsername: req.admin?.username
+      });
+
       const deletedUserSupport = await UserSupport.findByIdAndDelete(id);
 
       if (!deletedUserSupport) {
+        logger.warn('⚠️ Support ticket not found for deletion', {
+          ticketId: id,
+          adminUsername: req.admin?.username
+        });
         return res.status(404).json({
           success: false,
           message: 'User support ticket not found'
@@ -205,7 +271,7 @@ class UserSupportController {
 
       // Create audit log
       await createAuditLog(req, res, {
-        action: 'support_ticket_delete',
+        action: 'support_ticket_deleted',
         resourceType: 'support_ticket',
         resourceId: deletedUserSupport._id.toString(),
         resourceName: deletedUserSupport.title,
@@ -215,12 +281,23 @@ class UserSupportController {
       // Invalidate audit cache
       await invalidateAuditCache();
 
+      logger.info('✅ User support ticket deleted successfully', {
+        ticketId: id,
+        adminUsername: req.admin?.username,
+        title: deletedUserSupport.title
+      });
+
       res.json({
         success: true,
         message: 'User support ticket deleted successfully',
         data: deletedUserSupport
       });
     } catch (error) {
+      logger.error('❌ Error deleting user support ticket', {
+        error: error.message,
+        ticketId: req.params.id,
+        adminId: req.admin?.id
+      });
       console.error('Error deleting user support ticket:', error);
       res.status(500).json({
         success: false,

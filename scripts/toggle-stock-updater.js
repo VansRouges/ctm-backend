@@ -30,14 +30,24 @@ if (action === 'disable') {
     '// import StockUpdater from \'./jobs/stock-updater.jobs.js\';'
   );
   
-  // Comment out scheduler blocks
+  // Comment out scheduler blocks - handle both single and double comment patterns
   serverContent = serverContent.replace(
     /(\s+)const stockUpdater = new StockUpdater\(\);/g,
     '$1// const stockUpdater = new StockUpdater();'
   );
   
   serverContent = serverContent.replace(
+    /(\s+)\/\/ const stockUpdater = new StockUpdater\(\);/g,
+    '$1// const stockUpdater = new StockUpdater();'
+  );
+  
+  serverContent = serverContent.replace(
     /(\s+)stockUpdater\.startScheduler\(interval\);/g,
+    '$1// stockUpdater.startScheduler(interval);'
+  );
+  
+  serverContent = serverContent.replace(
+    /(\s+)\/\/ stockUpdater\.startScheduler\(interval\);/g,
     '$1// stockUpdater.startScheduler(interval);'
   );
   
@@ -50,6 +60,12 @@ if (action === 'disable') {
   appContent = appContent.replace(
     /^import StockUpdater from '\.\/jobs\/stock-updater\.jobs\.js';/m,
     '// import StockUpdater from \'./jobs/stock-updater.jobs.js\';'
+  );
+  
+  // Comment out the stockUpdater instantiation
+  appContent = appContent.replace(
+    /^const stockUpdater = new StockUpdater\(\);$/m,
+    '// const stockUpdater = new StockUpdater();'
   );
   
   // Comment out the entire manual endpoint block
@@ -74,10 +90,20 @@ if (action === 'disable') {
     'import StockUpdater from \'./jobs/stock-updater.jobs.js\';'
   );
   
-  // Uncomment scheduler blocks
+  // Uncomment scheduler blocks - handle double commented patterns
+  serverContent = serverContent.replace(
+    /(\s+)\/\/ \/\/ const stockUpdater = new StockUpdater\(\);/g,
+    '$1const stockUpdater = new StockUpdater();'
+  );
+  
   serverContent = serverContent.replace(
     /(\s+)\/\/ const stockUpdater = new StockUpdater\(\);/g,
     '$1const stockUpdater = new StockUpdater();'
+  );
+  
+  serverContent = serverContent.replace(
+    /(\s+)\/\/ \/\/ stockUpdater\.startScheduler\(interval\);/g,
+    '$1stockUpdater.startScheduler(interval);'
   );
   
   serverContent = serverContent.replace(
@@ -94,6 +120,12 @@ if (action === 'disable') {
   appContent = appContent.replace(
     /^\/\/ import StockUpdater from '\.\/jobs\/stock-updater\.jobs\.js';/m,
     'import StockUpdater from \'./jobs/stock-updater.jobs.js\';'
+  );
+  
+  // Uncomment the stockUpdater instantiation
+  appContent = appContent.replace(
+    /^\/\/ const stockUpdater = new StockUpdater\(\);$/m,
+    'const stockUpdater = new StockUpdater();'
   );
   
   // Uncomment the manual endpoint block

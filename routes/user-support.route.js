@@ -13,8 +13,8 @@ userSupportRouter.post('/', UserSupportController.createUserSupport);
 // GET /api/user-support/:id - Get user support ticket by ID
 userSupportRouter.get('/:id', UserSupportController.getUserSupportById);
 
-// PUT /api/user-support/:id - Update user support ticket
-userSupportRouter.put('/:id', UserSupportController.updateUserSupport);
+// PUT /api/user-support/:id - Update user support ticket (admin only)
+userSupportRouter.put('/:id', requireAdminAuth, UserSupportController.updateUserSupport);
 
 // DELETE /api/user-support/:id - Delete user support ticket (admin only)
 userSupportRouter.delete('/:id', requireAdminAuth, UserSupportController.deleteUserSupport);

@@ -19,7 +19,7 @@ import { requireAdminAuth } from './middlewares/auth.middleware.js';
 import { createAuditLog } from './utils/auditHelper.js';
 import { invalidateAuditCache } from './controllers/audit-log.controller.js';
 
-// import StockUpdater from './jobs/stock-updater.jobs.js'; // DISABLED FOR NOW
+import StockUpdater from './jobs/stock-updater.jobs.js'; // DISABLED FOR NOW
 import cryptoPricesRouter from './routes/crypto-prices.route.js';
 import arcjectMiddleware from './middlewares/arcjet.middleware.js';
 
@@ -27,7 +27,7 @@ const app = express();
 
 // NOTE: Scheduler start & DB connection happen in server.js (runtime bootstrap)
 // We still create an instance for manual trigger endpoint; scheduler is only started elsewhere.
-// const stockUpdater = new StockUpdater();
+const stockUpdater = new StockUpdater();
 
 // CORS configuration
 const corsOptions = {
@@ -70,7 +70,7 @@ app.use('/api/v1/notifications', notificationRouter);
 app.use('/api/v1/audit-logs', auditLogRouter);
 
 // Manual stock update endpoint (for debugging/admin) - DISABLED FOR NOW
-/*
+
 app.post('/api/admin/update-stocks', requireAdminAuth, async (req, res, next) => {
   try {
     // Run update in background
@@ -94,7 +94,7 @@ app.post('/api/admin/update-stocks', requireAdminAuth, async (req, res, next) =>
     next(error);
   }
 });
-*/
+
 
 // 404 for unmatched routes
 app.use(notFoundHandler);
