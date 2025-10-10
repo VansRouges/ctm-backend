@@ -110,8 +110,7 @@ const kycSchema = new mongoose.Schema({
   
   // Review Information
   reviewedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Admin',
+    type: String, // Admin ID as string since no Admin model exists
     default: null
   },
   reviewedAt: {
@@ -254,14 +253,12 @@ kycSchema.statics.getPendingKYCs = function() {
 kycSchema.statics.getKYCsByStatus = function(status) {
   return this.find({ status })
     .populate('userId', 'email firstName lastName')
-    .populate('reviewedBy', 'email username')
     .sort({ submittedAt: -1 });
 };
 
 kycSchema.statics.getUserKYC = function(userId) {
   return this.findOne({ userId })
-    .populate('userId', 'email firstName lastName')
-    .populate('reviewedBy', 'email username');
+    .populate('userId', 'email firstName lastName');
 };
 
 // Enable virtuals in JSON

@@ -22,6 +22,12 @@ const auditLogSchema = new mongoose.Schema(
         'users_view_all',
         'user_updated',
         'user_deleted',
+
+        // KYC
+        'kyc_applications_view_all',
+        'kyc_applications_viewed',
+        'kyc_status_updated',
+        'kyc_application_deleted',
         
         // Deposits
         'deposits_view_all',
@@ -84,7 +90,7 @@ const auditLogSchema = new mongoose.Schema(
       type: {
         type: String,
         enum: ['user', 'deposit', 'withdraw', 'copytrading_option', 'copytrade_purchase', 
-               'crypto_option', 'support_ticket', 'admin_email', 'notification', 'system', 'auth'],
+               'crypto_option', 'support_ticket', 'admin_email', 'notification', 'system', 'kyc', 'auth'],
         required: true
       },
       id: String, // Resource ID if applicable

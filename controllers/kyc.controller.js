@@ -333,7 +333,6 @@ export const getAllKYCs = async (req, res) => {
     const [kycs, total] = await Promise.all([
       KYC.find(query)
         .populate('userId', 'email firstName lastName createdAt')
-        .populate('reviewedBy', 'email username')
         .sort(sort)
         .skip(skip)
         .limit(parseInt(limit))
@@ -350,12 +349,11 @@ export const getAllKYCs = async (req, res) => {
       canResubmit: kyc.resubmissionCount < 3 && ['rejected', 'resubmission_required'].includes(kyc.status)
     }));
 
-    await createAuditLog({
-      adminId: req.admin.id,
-      action: 'kyc_applications_viewed',
+    await createAuditLog(req, res, {
+      action: 'kyc_applications_view_all',
       resourceType: 'kyc',
-      details: `Admin viewed KYC applications with filters: ${JSON.stringify({ status, page, limit })}`,
-      metadata: {
+      description: `Admin viewed KYC applications with filters: ${JSON.stringify({ status, page, limit })}`,
+      changes: {
         totalResults: total,
         filters: { status, page, limit, sortBy, sortOrder }
       }
@@ -398,8 +396,7 @@ export const getKYCById = async (req, res) => {
     const { id } = req.params;
 
     const kyc = await KYC.findById(id)
-      .populate('userId', 'email firstName lastName createdAt lastLogin')
-      .populate('reviewedBy', 'email username');
+      .populate('userId', 'email firstName lastName createdAt lastLogin');
 
     if (!kyc) {
       return res.status(404).json({
@@ -408,13 +405,12 @@ export const getKYCById = async (req, res) => {
       });
     }
 
-    await createAuditLog({
-      adminId: req.admin.id,
+    await createAuditLog(req, res, {
       action: 'kyc_application_viewed',
       resourceType: 'kyc',
       resourceId: id,
-      details: `Admin viewed KYC application for user ${kyc.userId.email}`,
-      metadata: {
+      description: `Admin viewed KYC application for user ${kyc.userId.email}`,
+      changes: {
         kycStatus: kyc.status,
         userId: kyc.userId._id
       }
@@ -488,13 +484,12 @@ export const updateKYCStatus = async (req, res) => {
     await kyc.save();
 
     // Create audit log
-    await createAuditLog({
-      adminId: req.admin.id,
+    await createAuditLog(req, res, {
       action: 'kyc_status_updated',
       resourceType: 'kyc',
       resourceId: id,
-      details: `KYC status changed from ${oldStatus} to ${status} for user ${kyc.userId.email}`,
-      metadata: {
+      description: `KYC status changed from ${oldStatus} to ${status} for user ${kyc.userId.email}`,
+      changes: {
         oldStatus,
         newStatus: status,
         userId: kyc.userId._id,
@@ -557,13 +552,12 @@ export const deleteKYC = async (req, res) => {
     // Delete KYC record
     await KYC.findByIdAndDelete(id);
 
-    await createAuditLog({
-      adminId: req.admin.id,
+    await createAuditLog(req, res, {
       action: 'kyc_application_deleted',
       resourceType: 'kyc',
       resourceId: id,
-      details: `Admin deleted KYC application for user ${kyc.userId.email}`,
-      metadata: {
+      description: `Admin deleted KYC application for user ${kyc.userId.email}`,
+      changes: {
         deletedKycStatus: kyc.status,
         userId: kyc.userId._id,
         documentsDeleted: 0 // Documents kept in Cloudinary for audit purposes
