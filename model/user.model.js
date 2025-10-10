@@ -4,7 +4,13 @@ const userSchema = new mongoose.Schema({
   // Using MongoDB's ObjectId instead of cuid()
   clerkId: {
     type: String,
-    required: true,
+    sparse: true, // Allow multiple null values but unique non-null values
+    unique: true
+  },
+  // Google OAuth fields
+  googleId: {
+    type: String,
+    sparse: true,
     unique: true
   },
   email: {
@@ -13,6 +19,11 @@ const userSchema = new mongoose.Schema({
     unique: true,
     lowercase: true,
     trim: true
+  },
+  // Password for manual registration (optional for OAuth users)
+  password: {
+    type: String,
+    select: false // Don't include in queries by default
   },
   username: {
     type: String,
@@ -26,6 +37,28 @@ const userSchema = new mongoose.Schema({
   lastName: {
     type: String,
     trim: true
+  },
+  // OAuth and verification fields
+  profilePicture: {
+    type: String,
+    trim: true
+  },
+  authProvider: {
+    type: String,
+    enum: ['manual', 'google'],
+    default: 'manual'
+  },
+  isEmailVerified: {
+    type: Boolean,
+    default: false
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  lastLogin: {
+    type: Date,
+    default: Date.now
   },
   roi: {
     type: Number,
@@ -58,8 +91,11 @@ const userSchema = new mongoose.Schema({
 
 // Add indexes for better query performance
 userSchema.index({ clerkId: 1 });
+userSchema.index({ googleId: 1 });
 userSchema.index({ email: 1 });
 userSchema.index({ username: 1 });
+userSchema.index({ authProvider: 1 });
+userSchema.index({ isActive: 1 });
 
 // Add virtual for full name
 userSchema.virtual('fullName').get(function() {

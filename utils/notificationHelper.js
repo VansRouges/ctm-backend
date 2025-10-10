@@ -68,6 +68,19 @@ const generateDescription = (action, user, metadata = {}) => {
     case 'user_created':
       return `${userIdentifier} just created an account`;
 
+    case 'user_login':
+      const authProvider = metadata.authProvider || 'platform';
+      return `${userIdentifier} just logged in via ${authProvider}`;
+
+    case 'kyc_submitted':
+      return `${userIdentifier} submitted KYC application for review`;
+
+    case 'kyc_approved':
+      return `${userIdentifier}'s KYC application has been approved`;
+
+    case 'kyc_rejected':
+      return `${userIdentifier}'s KYC application has been rejected`;
+
     case 'deposit':
       if (amount) {
         return `${userIdentifier} just deposited ${currency}${amount}`;
