@@ -1,6 +1,8 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import session from 'express-session';
+import passport from './config/passport.js';
 import requestLogger from './middlewares/logger.middleware.js'
 import { notFoundHandler, errorHandler } from './middlewares/error.middleware.js'
 import userRouter from './routes/user.route.js';
@@ -15,6 +17,10 @@ import copytradePurchaseRouter from './routes/copytrade-purchase.route.js';
 import adminAuthRouter from './routes/admin-auth.route.js';
 import notificationRouter from './routes/notification.route.js';
 import auditLogRouter from './routes/audit-log.route.js';
+import oauthRouter from './routes/oauth.route.js';
+import userAuthRouter from './routes/user-auth.route.js';
+import kycRouter from './routes/kyc.route.js';
+import cloudinaryRouter from './routes/cloudinary.route.js';
 import { requireAdminAuth } from './middlewares/auth.middleware.js';
 import { createAuditLog } from './utils/auditHelper.js';
 import { invalidateAuditCache } from './controllers/audit-log.controller.js';
@@ -47,6 +53,23 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser()); 
+
+// Session configuration for passport (only for OAuth callback)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-session-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    maxAge: 10 * 60 * 1000, // 10 minutes (only for OAuth flow)
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true
+  }
+}));
+
+// Initialize passport
+app.use(passport.initialize());
+app.use(passport.session());
+
 app.use(requestLogger);
 app.use(arcjectMiddleware);
 
@@ -56,6 +79,10 @@ app.get('/', (req, res) => {
 
 
 app.use('/api/v1/users', userRouter);
+app.use('/api/v1/oauth', oauthRouter);
+app.use('/api/v1/user-auth', userAuthRouter);
+app.use('/api/v1/kyc', kycRouter);
+app.use('/api/v1/uploads', cloudinaryRouter);
 app.use('/api/v1/crypto-prices', cryptoPricesRouter);
 app.use('/api/v1/stocks', stockRouter);
 app.use('/api/v1/crypto-options', cryptoOptionRouter);
