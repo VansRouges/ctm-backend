@@ -483,6 +483,57 @@ export const updateKYCStatus = async (req, res) => {
 
     await kyc.save();
 
+    // Sync user's kycStatus field with KYC approval status
+    const userKycStatus = status === 'approved';
+    await User.findByIdAndUpdate(
+      kyc.userId._id,
+      { kycStatus: userKycStatus },
+      { new: true }
+    );
+
+    logger.info('🔄 User kycStatus synchronized', {
+      userId: kyc.userId._id,
+      kycStatus: userKycStatus,
+      kycRecordStatus: status
+    });
+
+    // Send notification to user about KYC status change
+    if (status === 'approved') {
+      await createNotification({
+        action: 'kyc_approved',
+        userId: kyc.userId._id,
+        description: 'Your KYC application has been approved. You now have full access to all platform features.',
+        metadata: {
+          kycId: kyc._id,
+          approvedAt: kyc.reviewedAt,
+          userEmail: kyc.userId.email
+        }
+      });
+    } else if (status === 'rejected') {
+      await createNotification({
+        action: 'kyc_rejected',
+        userId: kyc.userId._id,
+        description: rejectionReason || 'Your KYC application has been rejected. Please review the feedback and resubmit.',
+        metadata: {
+          kycId: kyc._id,
+          rejectionReason,
+          reviewNotes,
+          userEmail: kyc.userId.email
+        }
+      });
+    } else if (status === 'resubmission_required') {
+      await createNotification({
+        action: 'kyc_resubmission_required',
+        userId: kyc.userId._id,
+        description: 'Please resubmit your KYC application with the requested corrections.',
+        metadata: {
+          kycId: kyc._id,
+          reviewNotes,
+          userEmail: kyc.userId.email
+        }
+      });
+    }
+
     // Create audit log
     await createAuditLog(req, res, {
       action: 'kyc_status_updated',

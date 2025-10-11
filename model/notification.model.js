@@ -5,7 +5,7 @@ const notificationSchema = new mongoose.Schema(
     action: {
       type: String,
       required: true,
-      enum: ['user_created', 'user_login', 'kyc_submitted', 'kyc_approved', 'kyc_rejected', 'deposit', 'withdraw', 'copytrade_purchase', 'support_ticket'],
+      enum: ['user_created', 'user_login', 'kyc_submitted', 'kyc_approved', 'kyc_rejected', 'kyc_resubmission_required', 'deposit', 'withdraw', 'copytrade_purchase', 'support_ticket'],
       index: true
     },
     description: {
