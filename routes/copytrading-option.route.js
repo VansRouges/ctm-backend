@@ -5,7 +5,7 @@ import { requireAdminAuth } from '../middlewares/auth.middleware.js';
 const copyTradingOptionRouter = express.Router();
 
 // GET all (admin only)
-copyTradingOptionRouter.get('/', requireAdminAuth, CopytradingOptionController.getAllCopytradingOptions);
+copyTradingOptionRouter.get('/', CopytradingOptionController.getAllCopytradingOptions);
 
 // Recommended first (static)
 copyTradingOptionRouter.get('/recommended', CopytradingOptionController.getRecommendedCopytradingOptions);

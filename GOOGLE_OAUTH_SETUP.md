@@ -1,180 +1,535 @@
-# Google OAuth Setup Guide
+# Google OAuth Integration Guide for Next.js Frontend
 
-This guide will walk you through setting up Google OAuth authentication for your CTM Backend application.
+Complete guide to integrate Google OAuth authentication with your CTM Next.js frontend application.
 
-## 🔑 Google Console Setup
+---
 
-### Step 1: Create a Google Cloud Project
+## 🔗 Backend API Endpoints
 
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
-2. Click "Select a project" at the top of the page
-3. Click "New Project"
-4. Enter your project name (e.g., "CTM Backend")
-5. Click "Create"
+Your backend is running at: **`http://localhost:5000`** (development)
 
-### Step 2: Enable Google+ API
+### Available OAuth Endpoints:
 
-1. In the Google Cloud Console, go to "APIs & Services" > "Library"
-2. Search for "Google+ API" 
-3. Click on it and then click "Enable"
-4. Also search for and enable "People API" (recommended for profile data)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/oauth/google` | Initiates Google OAuth flow |
+| `GET` | `/api/v1/oauth/google/callback` | OAuth callback (handled by backend) |
+| `GET` | `/api/v1/oauth/profile` | Get authenticated user profile |
+| `POST` | `/api/v1/oauth/logout` | Logout user |
 
-### Step 3: Configure OAuth Consent Screen
+---
 
-1. Go to "APIs & Services" > "OAuth consent screen"
-2. Choose "External" (for public users) and click "Create"
-3. Fill in the required information:
-   - **App name**: CTM Platform
-   - **User support email**: Your email
-   - **Developer contact information**: Your email
-4. Add your domain to "Authorized domains" (e.g., `yourdomain.com`)
-5. Click "Save and Continue"
-6. In "Scopes", click "Add or Remove Scopes" and add:
-   - `../auth/userinfo.email`
-   - `../auth/userinfo.profile`
-7. Click "Save and Continue"
-8. Add test users (your email and any others you want to test with)
-9. Click "Save and Continue"
+## 🚀 Frontend Integration Steps
 
-### Step 4: Create OAuth 2.0 Credentials
+### Step 1: Create OAuth Login Button
 
-1. Go to "APIs & Services" > "Credentials"
-2. Click "Create Credentials" > "OAuth 2.0 Client IDs"
-3. Choose "Web application"
-4. Name it "CTM Backend OAuth"
-5. Add authorized redirect URIs:
-   - For development: `http://localhost:3000/api/v1/auth/google/callback`
-   - For production: `https://yourdomain.com/api/v1/auth/google/callback`
-6. Click "Create"
-7. **Important**: Copy your Client ID and Client Secret
+Create a component or button that redirects users to the Google OAuth endpoint:
 
-## 🔧 Environment Variables
+```tsx
+// components/GoogleLoginButton.tsx
+'use client';
 
-Add these to your `.env` file:
+export default function GoogleLoginButton() {
+  const handleGoogleLogin = () => {
+    // Redirect to backend OAuth endpoint
+    window.location.href = 'http://localhost:5000/api/v1/oauth/google';
+  };
 
-```env
-# Google OAuth Configuration
-GOOGLE_CLIENT_ID=your_google_client_id_here
-GOOGLE_CLIENT_SECRET=your_google_client_secret_here
-GOOGLE_CALLBACK_URL=http://localhost:3000/api/v1/auth/google/callback
-
-# Frontend URL for redirects
-FRONTEND_URL=http://localhost:3001
-
-# Session Secret (generate a random string)
-SESSION_SECRET=your_random_session_secret_here
-```
-
-## 📝 Production Environment Variables
-
-For production, update these values:
-
-```env
-GOOGLE_CALLBACK_URL=https://yourdomain.com/api/v1/auth/google/callback
-FRONTEND_URL=https://yourfrontend.com
-```
-
-## 🔗 OAuth Endpoints
-
-Your application now has these endpoints:
-
-### Authentication
-- `GET /api/v1/auth/google` - Initiate Google OAuth
-- `GET /api/v1/auth/google/callback` - OAuth callback (handled automatically)
-
-### User Management
-- `GET /api/v1/auth/profile` - Get user profile (requires authentication)
-- `POST /api/v1/auth/logout` - Logout user
-
-## 🌐 Frontend Integration
-
-### Initiate Login
-```javascript
-// Redirect user to Google OAuth
-window.location.href = 'http://localhost:3000/api/v1/auth/google';
-```
-
-### Handle Callback
-Your frontend should handle the callback at `/auth/callback` with URL parameters:
-- `token` - JWT token for authenticated requests
-- `user` - User data (JSON encoded)
-
-Example callback handler:
-```javascript
-// In your frontend route handler (e.g., /auth/callback)
-const urlParams = new URLSearchParams(window.location.search);
-const token = urlParams.get('token');
-const userData = JSON.parse(decodeURIComponent(urlParams.get('user')));
-
-if (token) {
-  // Store token in localStorage or secure cookie
-  localStorage.setItem('authToken', token);
-  localStorage.setItem('user', JSON.stringify(userData));
-  
-  // Redirect to dashboard or home page
-  window.location.href = '/dashboard';
-} else {
-  // Handle error
-  const error = urlParams.get('error');
-  console.error('OAuth error:', error);
+  return (
+    <button
+      onClick={handleGoogleLogin}
+      className="flex items-center gap-3 px-6 py-3 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+      </svg>
+      <span className="font-medium text-gray-700">Continue with Google</span>
+    </button>
+  );
 }
 ```
 
-### Make Authenticated Requests
-```javascript
-// Include token in Authorization header
-const token = localStorage.getItem('authToken');
+### Step 2: Create OAuth Callback Page
 
-fetch('/api/v1/auth/profile', {
-  headers: {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json'
+Create a callback page that handles the redirect from Google OAuth:
+
+```tsx
+// app/auth/callback/page.tsx
+'use client';
+
+import { useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+
+function CallbackContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    const token = searchParams.get('token');
+    const error = searchParams.get('error');
+
+    if (error) {
+      // Handle OAuth error
+      console.error('OAuth error:', error);
+      
+      // Show error message to user
+      if (error === 'oauth_failed') {
+        alert('Google OAuth authentication failed. Please try again.');
+      } else if (error === 'oauth_error') {
+        alert('An error occurred during authentication. Please try again.');
+      }
+      
+      // Redirect to login page
+      router.push('/login');
+      return;
+    }
+
+    if (token) {
+      // Store token in localStorage
+      localStorage.setItem('authToken', token);
+      
+      // Fetch user profile with the token
+      fetchUserProfile(token);
+    } else {
+      // No token received, redirect to login
+      router.push('/login');
+    }
+  }, [searchParams, router]);
+
+  const fetchUserProfile = async (token: string) => {
+    try {
+      const response = await fetch('http://localhost:5000/api/v1/oauth/profile', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Store user data
+        localStorage.setItem('user', JSON.stringify(data.user));
+        
+        console.log('✅ Login successful:', data.user);
+        
+        // Redirect to dashboard
+        router.push('/dashboard');
+      } else {
+        console.error('Failed to fetch user profile');
+        router.push('/login');
+      }
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      router.push('/login');
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Completing authentication...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function CallbackPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <p>Loading...</p>
+      </div>
+    }>
+      <CallbackContent />
+    </Suspense>
+  );
+}
+```
+
+### Step 3: Create Auth Helper Functions
+
+Create utility functions for authentication:
+
+```typescript
+// lib/auth.ts
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+
+export interface User {
+  _id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  username?: string;
+  profilePicture?: string;
+  authProvider: 'manual' | 'google';
+  kycStatus: boolean;
+  accountStatus: string;
+  role: string;
+  currentValue: number;
+  createdAt: string;
+  lastLogin?: string;
+}
+
+// Get stored token
+export const getAuthToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('authToken');
+};
+
+// Get stored user
+export const getUser = (): User | null => {
+  if (typeof window === 'undefined') return null;
+  const userStr = localStorage.getItem('user');
+  return userStr ? JSON.parse(userStr) : null;
+};
+
+// Check if user is authenticated
+export const isAuthenticated = (): boolean => {
+  return !!getAuthToken();
+};
+
+// Fetch user profile
+export const fetchUserProfile = async (): Promise<User | null> => {
+  const token = getAuthToken();
+  if (!token) return null;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/oauth/profile`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      localStorage.setItem('user', JSON.stringify(data.user));
+      return data.user;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    return null;
   }
-})
-.then(response => response.json())
-.then(data => console.log(data));
+};
+
+// Logout user
+export const logout = async (): Promise<void> => {
+  const token = getAuthToken();
+  
+  if (token) {
+    try {
+      await fetch(`${API_BASE_URL}/api/v1/oauth/logout`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+    } catch (error) {
+      console.error('Error during logout:', error);
+    }
+  }
+  
+  // Clear local storage
+  localStorage.removeItem('authToken');
+  localStorage.removeItem('user');
+  
+  // Redirect to login
+  window.location.href = '/login';
+};
 ```
 
-## 🛠️ Installation
+### Step 4: Create Protected Route Wrapper
 
-Make sure you have installed the required dependencies:
+Protect routes that require authentication:
 
-```bash
-npm install passport passport-google-oauth20 express-session
+```tsx
+// components/ProtectedRoute.tsx
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { isAuthenticated, fetchUserProfile } from '@/lib/auth';
+
+export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (!isAuthenticated()) {
+        router.push('/login');
+        return;
+      }
+
+      // Verify token is still valid
+      const user = await fetchUserProfile();
+      if (!user) {
+        router.push('/login');
+        return;
+      }
+
+      setIsLoading(false);
+    };
+
+    checkAuth();
+  }, [router]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
 ```
 
-## 🔒 Security Notes
+### Step 5: Use in Your Pages
 
-1. **Keep secrets secure**: Never commit your Google Client Secret to version control
-2. **Use HTTPS in production**: OAuth requires HTTPS in production environments
-3. **Validate redirect URIs**: Only use trusted domains in your OAuth configuration
-4. **Session security**: Use a strong, random session secret
-5. **Token expiration**: JWT tokens expire in 7 days by default
+```tsx
+// app/dashboard/page.tsx
+import ProtectedRoute from '@/components/ProtectedRoute';
 
-## 🧪 Testing
+export default function DashboardPage() {
+  return (
+    <ProtectedRoute> 
+      <div className="container mx-auto p-6">
+        <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
+        {/* Your dashboard content */}
+      </div>
+    </ProtectedRoute>
+  );
+}
+```
 
-1. Start your backend server
-2. Navigate to `http://localhost:3000/api/v1/auth/google`
-3. You should be redirected to Google's OAuth consent screen
-4. After authorization, you'll be redirected back with a token
+---
 
-## 🐛 Troubleshooting
+## 🔐 Making Authenticated API Requests
 
-### Common Issues:
+Use the token to make authenticated requests to your backend:
 
-1. **"redirect_uri_mismatch"**: Check that your callback URL in Google Console matches exactly
-2. **"invalid_client"**: Verify your Client ID and Secret are correct
-3. **CORS errors**: Make sure your frontend URL is properly configured
-4. **Session issues**: Ensure SESSION_SECRET is set in your environment
+```typescript
+// Example: Fetch user data
+const fetchUserData = async () => {
+  const token = getAuthToken();
+  
+  const response = await fetch('http://localhost:5000/api/v1/oauth/profile', {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  
+  const data = await response.json();
+  return data;
+};
 
-### Debug Mode:
-Enable debug logging by setting:
+// Example: Submit KYC
+const submitKYC = async (kycData: any) => {
+  const token = getAuthToken();
+  
+  const response = await fetch('http://localhost:5000/api/v1/kyc/submit', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(kycData),
+  });
+  
+  return response.json();
+};
+```
+
+---
+
+## 📁 Project Structure
+
+```
+your-nextjs-app/
+├── app/
+│   ├── auth/
+│   │   └── callback/
+│   │       └── page.tsx          # OAuth callback handler
+│   ├── login/
+│   │   └── page.tsx              # Login page with Google button
+│   └── dashboard/
+│       └── page.tsx              # Protected dashboard
+├── components/
+│   ├── GoogleLoginButton.tsx    # Google OAuth button
+│   └── ProtectedRoute.tsx       # Auth wrapper component
+├── lib/
+│   └── auth.ts                   # Auth utility functions
+└── .env.local                    # Environment variables
+```
+
+---
+
+## 🌍 Environment Variables
+
+Create a `.env.local` file in your Next.js project root:
+
 ```env
-DEBUG=passport*
+# Backend API URL
+NEXT_PUBLIC_API_URL=http://localhost:5000
+
+# For production:
+# NEXT_PUBLIC_API_URL=https://your-backend-domain.com
 ```
 
-## 📚 Additional Resources
+---
 
-- [Google OAuth 2.0 Documentation](https://developers.google.com/identity/protocols/oauth2)
-- [Passport.js Google Strategy](http://www.passportjs.org/packages/passport-google-oauth20/)
-- [Express Session Documentation](https://github.com/expressjs/session)
+## 🎯 Complete Authentication Flow
+
+1. **User clicks "Continue with Google"** → Redirects to `http://localhost:5000/api/v1/oauth/google`
+2. **Backend redirects to Google** → User sees Google OAuth consent screen
+3. **User authorizes** → Google redirects back to backend callback
+4. **Backend generates JWT token** → Redirects to `http://localhost:3000/auth/callback?token=<JWT_TOKEN>`
+5. **Frontend receives token** → Stores in localStorage and fetches user profile
+6. **User is authenticated** → Redirected to dashboard
+
+---
+
+## 🔒 Token Information
+
+- **Token Type**: JWT (JSON Web Token)
+- **Expiration**: 48 hours
+- **Storage**: localStorage (key: `authToken`)
+- **Usage**: Include in `Authorization` header as `Bearer <token>`
+
+---
+
+## ✅ User Data Structure
+
+After successful authentication, you'll receive:
+
+```typescript
+{
+  "_id": "user_mongodb_id",
+  "email": "user@example.com",
+  "firstName": "John",
+  "lastName": "Doe",
+  "username": "johndoe",
+  "profilePicture": "https://...",
+  "authProvider": "google",
+  "kycStatus": false,
+  "accountStatus": "active",
+  "role": "user",
+  "currentValue": 0,
+  "createdAt": "2025-10-15T...",
+  "lastLogin": "2025-10-15T..."
+}
+```
+
+---
+
+## 🐛 Error Handling
+
+The backend returns these error scenarios:
+
+| Error | URL Parameter | Description |
+|-------|---------------|-------------|
+| OAuth Failed | `?error=oauth_failed` | User denied permission or OAuth failed |
+| OAuth Error | `?error=oauth_error` | Server-side error during authentication |
+
+Handle these in your callback page to show appropriate messages to users.
+
+---
+
+## 🚀 Production Deployment
+
+### Backend Changes:
+Update your `.env.production.local`:
+```env
+FRONTEND_URL=https://your-frontend-domain.com
+GOOGLE_CALLBACK_URL=https://your-backend-domain.com/api/v1/oauth/google/callback
+```
+
+### Frontend Changes:
+Update your `.env.production`:
+```env
+NEXT_PUBLIC_API_URL=https://your-backend-domain.com
+```
+
+### Google Console:
+Add production callback URL to authorized redirect URIs:
+```
+https://your-backend-domain.com/api/v1/oauth/google/callback
+```
+
+---
+
+## 📚 Additional Features
+
+### Logout Button Component
+
+```tsx
+'use client';
+
+import { logout } from '@/lib/auth';
+
+export default function LogoutButton() {
+  return (
+    <button
+      onClick={logout}
+      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+    >
+      Logout
+    </button>
+  );
+}
+```
+
+### User Profile Display
+
+```tsx
+'use client';
+
+import { useEffect, useState } from 'react';
+import { getUser, User } from '@/lib/auth';
+
+export default function UserProfile() {
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    setUser(getUser());
+  }, []);
+
+  if (!user) return null;
+
+  return (
+    <div className="flex items-center gap-3">
+      {user.profilePicture && (
+        <img
+          src={user.profilePicture}
+          alt={user.firstName || 'User'}
+          className="w-10 h-10 rounded-full"
+        />
+      )}
+      <div>
+        <p className="font-medium">{user.firstName} {user.lastName}</p>
+        <p className="text-sm text-gray-600">{user.email}</p>
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+## 🎉 You're All Set!
+
+Your Next.js frontend is now ready to authenticate users with Google OAuth. Users can sign in with their Google accounts and access protected routes seamlessly.
+
+**Need Help?** Check the browser console for detailed logs during the authentication flow.
