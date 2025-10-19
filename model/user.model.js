@@ -1,12 +1,13 @@
 import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema({
-  // Using MongoDB's ObjectId instead of cuid()
-  clerkId: {
-    type: String,
-    sparse: true, // Allow multiple null values but unique non-null values
-    unique: true
-  },
+  // Remove clerkId entirely since you're not using it anymore
+  // clerkId: {
+  //   type: String,
+  //   sparse: true,
+  //   unique: true
+  // },
+  
   // Google OAuth fields
   googleId: {
     type: String,
@@ -89,8 +90,8 @@ const userSchema = new mongoose.Schema({
   timestamps: true // This adds createdAt and updatedAt automatically
 });
 
-// Add indexes for better query performance
-userSchema.index({ clerkId: 1 });
+// Remove the clerkId index
+// userSchema.index({ clerkId: 1 });
 userSchema.index({ googleId: 1 });
 userSchema.index({ email: 1 });
 userSchema.index({ username: 1 });

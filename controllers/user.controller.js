@@ -77,33 +77,6 @@ const getUserById = async (req, res, next) => {
   }
 };
 
-// Get user by Clerk ID
-const getUserByClerkId = async (req, res, next) => {
-  try {
-    const user = await User.findOne({ clerkId: req.params.clerkId });
-    
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'User retrieved successfully',
-      data: user
-    });
-    next();
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server Error',
-      error: error.message
-    });
-    next(error);
-  }
-};
 
 // Create new user
 const createUser = async (req, res, next) => {
@@ -287,7 +260,6 @@ const deleteUser = async (req, res, next) => {
 export {
   getUsers,
   getUserById,
-  getUserByClerkId,
   createUser,
   updateUser,
   deleteUser

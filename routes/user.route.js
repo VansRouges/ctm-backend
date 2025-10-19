@@ -2,7 +2,6 @@ import express from 'express';
 import {
   getUsers,
   getUserById,
-  getUserByClerkId,
   createUser,
   updateUser,
   deleteUser
@@ -10,9 +9,6 @@ import {
 import { requireAdminAuth } from '../middlewares/auth.middleware.js';
 
 const userRouter = express.Router();
-
-// More specific routes first
-userRouter.get('/clerk/:clerkId', getUserByClerkId);
 
 // General routes
 userRouter.get('/', requireAdminAuth, getUsers);  // Admin only - get all users
