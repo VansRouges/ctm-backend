@@ -5,7 +5,7 @@ import { requireAdminAuth } from '../middlewares/auth.middleware.js';
 const cryptoOptionRouter = express.Router();
 
 // GET /api/v1/crypto-options - Get all crypto options (admin only)
-cryptoOptionRouter.get('/', requireAdminAuth, CryptoOptionController.getAllCryptoOptions);
+cryptoOptionRouter.get('/', CryptoOptionController.getAllCryptoOptions);
 
 // (Place user route BEFORE :id to avoid conflict)
 cryptoOptionRouter.get('/user/:userId', CryptoOptionController.getCryptoOptionsByUserId);
