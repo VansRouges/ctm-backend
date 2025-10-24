@@ -27,7 +27,7 @@ import { invalidateAuditCache } from './controllers/audit-log.controller.js';
 import portfolioRouter from './routes/portfolio.route.js';
 import cleanupRouter from './routes/cleanup.route.js';
 
-// import StockUpdater from './jobs/stock-updater.jobs.js'; // DISABLED FOR NOW
+import StockUpdater from './jobs/stock-updater.jobs.js'; // DISABLED FOR NOW
 import cryptoPricesRouter from './routes/crypto-prices.route.js';
 import arcjectMiddleware from './middlewares/arcjet.middleware.js';
 
@@ -35,7 +35,7 @@ const app = express();
 
 // NOTE: Scheduler start & DB connection happen in server.js (runtime bootstrap)
 // We still create an instance for manual trigger endpoint; scheduler is only started elsewhere.
-// const stockUpdater = new StockUpdater();
+const stockUpdater = new StockUpdater();
 
 // CORS configuration
 const corsOptions = {
