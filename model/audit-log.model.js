@@ -31,7 +31,7 @@ const auditLogSchema = new mongoose.Schema(
         
         // Deposits
         'deposits_view_all',
-        'deposit_updated',
+        'deposit_approved',
         'deposit_deleted',
         'deposit_status_changed',
         

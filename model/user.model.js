@@ -1,13 +1,6 @@
 import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema({
-  // Remove clerkId entirely since you're not using it anymore
-  // clerkId: {
-  //   type: String,
-  //   sparse: true,
-  //   unique: true
-  // },
-  
   // Google OAuth fields
   googleId: {
     type: String,
@@ -24,12 +17,12 @@ const userSchema = new mongoose.Schema({
   // Password for manual registration (optional for OAuth users)
   password: {
     type: String,
-    select: false // Don't include in queries by default
+    select: false
   },
   username: {
     type: String,
     trim: true,
-    sparse: true // Allows multiple null values but unique non-null values
+    sparse: true
   },
   firstName: {
     type: String,
@@ -39,7 +32,6 @@ const userSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  // OAuth and verification fields
   profilePicture: {
     type: String,
     trim: true
@@ -68,7 +60,7 @@ const userSchema = new mongoose.Schema({
   role: {
     type: String,
     default: 'user',
-    enum: ['user', 'admin'] // Add role restrictions if needed
+    enum: ['user', 'admin']
   },
   kycStatus: {
     type: Boolean,
@@ -82,25 +74,45 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  
+  // FINANCIAL FIELDS - UPDATED
   totalInvestment: {
     type: Number,
-    default: 0
+    default: 0,
+    min: 0,
+    // Total value of all approved deposits (historical tracking)
+  },
+  accountBalance: {
+    type: Number,
+    default: 0,
+    min: 0,
+    // Current available balance for withdrawals
+    // Will be initialized from totalInvestment for existing users
   }
 }, {
-  timestamps: true // This adds createdAt and updatedAt automatically
+  timestamps: true
 });
 
-// Remove the clerkId index
-// userSchema.index({ clerkId: 1 });
+// Indexes
 userSchema.index({ googleId: 1 });
 userSchema.index({ email: 1 });
 userSchema.index({ username: 1 });
 userSchema.index({ authProvider: 1 });
 userSchema.index({ isActive: 1 });
 
-// Add virtual for full name
+// Virtual for full name
 userSchema.virtual('fullName').get(function() {
   return `${this.firstName || ''} ${this.lastName || ''}`.trim();
+});
+
+// IMPORTANT: Pre-save hook to ensure accountBalance is initialized
+// This handles existing users who don't have accountBalance
+userSchema.pre('save', function(next) {
+  // If accountBalance doesn't exist (undefined), initialize it from totalInvestment
+  if (this.accountBalance === undefined) {
+    this.accountBalance = this.totalInvestment || 0;
+  }
+  next();
 });
 
 // Ensure virtual fields are serialized

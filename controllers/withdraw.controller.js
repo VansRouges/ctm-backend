@@ -1,12 +1,11 @@
+// controllers/withdraw.controller.js (SIMPLIFIED & REFACTORED)
 import Transaction from '../model/transaction.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
-import User from '../model/user.model.js';
-import { getTokenPrice } from '../utils/priceService.js';
+import WithdrawService from '../services/withdraw.service.js';
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
 import logger from '../utils/logger.js';
-import mongoose from 'mongoose';
 
 class WithdrawController {
   // Get all withdraws for a specific user
@@ -34,6 +33,37 @@ class WithdrawController {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch withdraws',
+        error: error.message
+      });
+    }
+  }
+
+  // Get withdraw by ID
+  static async getWithdrawById(req, res) {
+    try {
+      const { id } = req.params;
+
+      const withdraw = await Transaction.findOne({ 
+        _id: id, 
+        isWithdraw: true 
+      });
+
+      if (!withdraw) {
+        return res.status(404).json({
+          success: false,
+          message: 'Withdraw not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: withdraw
+      });
+    } catch (error) {
+      console.error('Error fetching withdraw by ID:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch withdraw',
         error: error.message
       });
     }
@@ -102,45 +132,87 @@ class WithdrawController {
         return res.status(validation.status).json({ success: false, message: validation.message });
       }
 
-      const withdraw = new Transaction({
+      // Check if user has sufficient balance before creating withdrawal request
+      try {
+        const balanceCheck = await WithdrawService.checkSufficientBalance(user, token_name, amount);
+        
+        if (!balanceCheck.hasSufficientFunds) {
+          logger.warn('⚠️ Insufficient balance for withdrawal request', {
+            userId: user,
+            userEmail: balanceCheck.userEmail,
+            tokenName: token_name,
+            requestedAmount: amount,
+            requiredUsd: balanceCheck.requiredUsdValue,
+            availableBalance: balanceCheck.currentBalance,
+            deficit: balanceCheck.deficit
+          });
+
+          return res.status(400).json({
+            success: false,
+            message: 'Insufficient balance for this withdrawal',
+            data: {
+              requiredUsdValue: balanceCheck.requiredUsdValue,
+              currentBalance: balanceCheck.currentBalance,
+              deficit: balanceCheck.deficit
+            }
+          });
+        }
+      } catch (error) {
+        if (error.message === 'USER_NOT_FOUND') {
+          return res.status(404).json({
+            success: false,
+            message: 'User not found'
+          });
+        }
+        // If price fetch fails, allow creation but log warning
+        logger.warn('⚠️ Could not verify balance during withdrawal creation', {
+          error: error.message,
+          userId: user,
+          tokenName: token_name
+        });
+      }
+
+      const withdrawData = {
         token_name,
-        isWithdraw: true,
-        isDeposit: false,
         amount,
-        token_withdraw_address,
+        token_withdraw_address: token_withdraw_address || '',
         user,
-        status: status || 'pending'
-      });
+        status: status || 'pending',
+        isWithdraw: true,
+        isDeposit: false
+      };
 
-      const savedWithdraw = await withdraw.save();
+      const withdraw = await Transaction.create(withdrawData);
 
-      // Create notification for admin
+      // Create notification
       await createNotification({
-        action: 'withdraw',
-        userId: user,
+        action: 'withdraw_created',
+        description: `New withdrawal request for ${amount} ${token_name}`,
         metadata: {
+          userId: user,
+          withdrawId: withdraw._id.toString(),
           amount,
-          currency: token_name,
-          referenceId: savedWithdraw._id.toString()
+          token_name,
+          referenceId: withdraw._id.toString()
         }
       });
-
+      
       res.status(201).json({
         success: true,
-        message: 'Withdraw created successfully',
-        data: savedWithdraw
+        message: 'Withdrawal request created successfully',
+        data: withdraw
       });
     } catch (error) {
       console.error('Error creating withdraw:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to create withdraw',
+        message: 'Failed to create withdrawal request',
         error: error.message
       });
     }
   }
 
-  // Update withdraw
+  // Update withdraw - REFACTORED VERSION
   static async updateWithdraw(req, res) {
     try {
       const { id } = req.params;
@@ -152,17 +224,18 @@ class WithdrawController {
         updates: Object.keys(updateData)
       });
 
-      // Force flags
-      updateData.isWithdraw = true;
-      updateData.isDeposit = false;
-
-      const existing = await Transaction.findOne({ _id: id, isWithdraw: true });
-      if (!existing) {
+      // Find the withdrawal
+      const withdrawal = await Transaction.findOne({ _id: id, isWithdraw: true });
+      
+      if (!withdrawal) {
         logger.warn('⚠️ Withdrawal not found', {
           withdrawalId: id,
           adminUsername: req.admin?.username
         });
-        return res.status(404).json({ success: false, message: 'Withdraw not found' });
+        return res.status(404).json({ 
+          success: false, 
+          message: 'Withdraw not found' 
+        });
       }
 
       // If user field is being updated, validate it exists
@@ -174,163 +247,143 @@ class WithdrawController {
             error: validation.message,
             adminUsername: req.admin?.username
           });
-          return res.status(validation.status).json({ success: false, message: validation.message });
-        }
-      }
-
-      const prevStatus = existing.status;
-
-      // Prevent editing amount/token once already approved
-      if (prevStatus === 'approved') {
-        const amountChange = updateData.amount !== undefined && updateData.amount !== existing.amount;
-        const tokenChange = updateData.token_name && updateData.token_name !== existing.token_name;
-        if (amountChange || tokenChange) {
-          logger.warn('⚠️ Cannot modify approved withdrawal', {
-            withdrawalId: id,
-            adminUsername: req.admin?.username,
-            currentStatus: prevStatus
+          return res.status(validation.status).json({ 
+            success: false, 
+            message: validation.message 
           });
-          return res.status(400).json({ success: false, message: 'Cannot modify amount or token_name after approval' });
         }
       }
 
-      if (updateData.status) existing.status = updateData.status;
-      if (prevStatus !== 'approved') { // editable only before approval
-        if (updateData.amount !== undefined) existing.amount = updateData.amount;
-        if (updateData.token_name) existing.token_name = updateData.token_name;
+      const previousStatus = withdrawal.status;
+      const isApproving = previousStatus !== 'approved' && updateData.status === 'approved';
+
+      // Handle approval flow
+      if (isApproving) {
+        try {
+          const approvalResult = await WithdrawService.approveWithdrawal(
+            withdrawal, 
+            req.admin?.username
+          );
+
+          // Create audit log
+          await createAuditLog(req, res, {
+            action: 'withdraw_approved',
+            resourceType: 'withdraw',
+            resourceId: withdrawal._id.toString(),
+            resourceName: `${withdrawal.token_name} withdrawal - ${withdrawal.amount}`,
+            changes: {
+              before: { 
+                status: previousStatus,
+                userBalance: approvalResult.previousBalance
+              },
+              after: { 
+                status: 'approved',
+                usdValue: approvalResult.usdValue,
+                userBalance: approvalResult.newBalance
+              }
+            },
+            description: `Approved ${withdrawal.token_name} withdrawal of ${withdrawal.amount} (USD $${approvalResult.usdValue.toFixed(2)})`
+          });
+
+          await invalidateAuditCache();
+
+          return res.json({
+            success: true,
+            message: 'Withdrawal approved successfully',
+            data: withdrawal,
+            usdValueDeducted: approvalResult.usdValue,
+            userNewBalance: approvalResult.newBalance,
+            userPreviousBalance: approvalResult.previousBalance
+          });
+
+        } catch (error) {
+          if (error.message === 'USER_NOT_FOUND') {
+            return res.status(404).json({ 
+              success: false, 
+              message: 'User not found for transaction' 
+            });
+          }
+          if (error.message === 'ALREADY_APPROVED') {
+            return res.status(400).json({ 
+              success: false, 
+              message: 'This withdrawal has already been approved' 
+            });
+          }
+          if (error.message === 'INSUFFICIENT_FUNDS') {
+            return res.status(400).json({ 
+              success: false, 
+              message: 'Insufficient totalInvestment to approve this withdrawal',
+              data: error.data
+            });
+          }
+          if (error.response || error.message?.toLowerCase().includes('price')) {
+            return res.status(502).json({ 
+              success: false, 
+              message: 'Failed to fetch token price', 
+              error: error.message 
+            });
+          }
+          throw error; // Re-throw unexpected errors
+        }
       }
-      if (updateData.token_withdraw_address) existing.token_withdraw_address = updateData.token_withdraw_address;
 
-      // Only act on transition to approved
-      const approving = prevStatus !== 'approved' && existing.status === 'approved';
+      // Handle non-approval updates (status changes to pending/rejected, or field updates)
+      try {
+        const updatedWithdrawal = await WithdrawService.updateWithdrawal(id, updateData);
 
-      if (approving) {
-        logger.info('✅ Approving withdrawal', {
-          withdrawalId: id,
-          adminUsername: req.admin?.username,
-          amount: existing.amount,
-          token: existing.token_name
+        // Create audit log
+        await createAuditLog(req, res, {
+          action: 'withdraw_updated',
+          resourceType: 'withdraw',
+          resourceId: updatedWithdrawal._id.toString(),
+          resourceName: `${updatedWithdrawal.token_name} withdrawal - ${updatedWithdrawal.amount}`,
+          changes: {
+            before: { 
+              status: previousStatus,
+              amount: withdrawal.amount,
+              token_name: withdrawal.token_name
+            },
+            after: { 
+              status: updatedWithdrawal.status,
+              amount: updatedWithdrawal.amount,
+              token_name: updatedWithdrawal.token_name
+            }
+          },
+          description: `Updated withdrawal: ${updatedWithdrawal.token_name} ${updatedWithdrawal.amount}`
         });
 
-        const session = await mongoose.startSession();
-        try {
-          await session.withTransaction(async () => {
-            const price = await getTokenPrice(existing.token_name);
-            const usdValue = Number((price * existing.amount).toFixed(8));
-            const userDoc = await User.findById(existing.user).select('totalInvestment').session(session);
-            if (!userDoc) throw new Error('USER_NOT_FOUND');
-            const currentTI = userDoc.totalInvestment || 0;
-            if (currentTI <= 0 || currentTI < usdValue) throw new Error('INSUFFICIENT_FUNDS');
+        await invalidateAuditCache();
 
-            // Persist snapshot fields ONLY if not already set
-            if (!existing.usdValue) {
-              existing.tokenPriceAtApproval = Number(price);
-              existing.usdValue = usdValue;
-              existing.approvedAt = new Date();
-            }
+        return res.json({
+          success: true,
+          message: 'Withdraw updated successfully',
+          data: updatedWithdrawal
+        });
 
-            userDoc.totalInvestment = Number((currentTI - usdValue).toFixed(8));
-            await userDoc.save({ session });
-            await existing.save({ session });
-            existing.usdValue = usdValue;
-
-            logger.info('💰 Withdrawal approved and funds deducted', {
-              withdrawalId: id,
-              adminUsername: req.admin?.username,
-              usdValueDeducted: usdValue,
-              remainingBalance: userDoc.totalInvestment
-            });
+      } catch (error) {
+        if (error.code === 'IMMUTABLE_WITHDRAWAL') {
+          return res.status(403).json({ 
+            success: false, 
+            message: error.message 
           });
-        } catch (err) {
-          session.endSession();
-          if (err.message === 'USER_NOT_FOUND') {
-            logger.error('❌ User not found for withdrawal approval', {
-              withdrawalId: id,
-              userId: existing.user,
-              adminUsername: req.admin?.username
-            });
-            return res.status(404).json({ success: false, message: 'User not found for transaction' });
-          }
-          if (err.message === 'INSUFFICIENT_FUNDS') {
-            logger.error('❌ Insufficient funds for withdrawal approval', {
-              withdrawalId: id,
-              adminUsername: req.admin?.username,
-              requestedAmount: existing.amount,
-              token: existing.token_name
-            });
-            return res.status(400).json({ success: false, message: 'Insufficient totalInvestment to approve this withdraw' });
-          }
-          if (err.response || err.message?.toLowerCase().includes('price')) {
-            logger.error('❌ Price service error during withdrawal approval', {
-              error: err.message,
-              withdrawalId: id,
-              token: existing.token_name
-            });
-            return res.status(502).json({ success: false, message: 'Failed to fetch token price', error: err.message });
-          }
-          logger.error('❌ Transaction error during withdrawal approval', {
-            error: err.message,
-            withdrawalId: id,
-            adminUsername: req.admin?.username
-          });
-          return res.status(500).json({ success: false, message: 'Failed during approval transaction', error: err.message });
-        } finally {
-          session.endSession();
         }
-      } else {
-        await existing.save();
+        if (error.message === 'WITHDRAWAL_NOT_FOUND') {
+          return res.status(404).json({ 
+            success: false, 
+            message: 'Withdraw not found' 
+          });
+        }
+        throw error;
       }
 
-      // Create audit log for withdraw update
-      const statusChanged = prevStatus !== existing.status;
-      const actionType = statusChanged ? 'withdraw_status_changed' : 'withdraw_updated';
-      
-      await createAuditLog(req, res, {
-        action: actionType,
-        resourceType: 'withdraw',
-        resourceId: existing._id.toString(),
-        resourceName: `${existing.token_name} withdrawal - ${existing.amount}`,
-        changes: {
-          before: { 
-            status: prevStatus,
-            amount: req.body.amount !== undefined ? (existing.amount - (req.body.amount - existing.amount)) : existing.amount,
-            token_name: req.body.token_name ? (existing.token_name === req.body.token_name ? existing.token_name : 'changed') : existing.token_name
-          },
-          after: { 
-            status: existing.status,
-            amount: existing.amount,
-            token_name: existing.token_name
-          }
-        },
-        description: statusChanged ? 
-          `Withdrawal status changed from ${prevStatus} to ${existing.status} for ${existing.token_name} ${existing.amount}` :
-          `Updated withdrawal: ${existing.token_name} ${existing.amount}`
-      });
-
-      // Invalidate audit cache
-      await invalidateAuditCache();
-
-      logger.info('✅ Withdrawal updated successfully', {
-        withdrawalId: id,
-        adminUsername: req.admin?.username,
-        newStatus: existing.status,
-        tokenName: existing.token_name,
-        amount: existing.amount
-      });
-
-      res.json({
-        success: true,
-        message: 'Withdraw updated successfully',
-        data: existing,
-        ...(existing.usdValue ? { usdValueDeducted: existing.usdValue } : {})
-      });
     } catch (error) {
       logger.error('❌ Error updating withdrawal', {
         error: error.message,
+        stack: error.stack,
         withdrawalId: req.params.id,
         adminId: req.admin?.id
       });
-      console.error('Error updating withdraw:', error);
+      
       res.status(500).json({
         success: false,
         message: 'Failed to update withdraw',
@@ -349,13 +402,9 @@ class WithdrawController {
         adminUsername: req.admin?.username
       });
 
-      // Get withdrawal data before deletion for audit
-      const withdrawToDelete = await Transaction.findOne({
-        _id: id,
-        isWithdraw: true
-      });
-
-      if (!withdrawToDelete) {
+      const withdraw = await Transaction.findOne({ _id: id, isWithdraw: true });
+      
+      if (!withdraw) {
         logger.warn('⚠️ Withdrawal not found for deletion', {
           withdrawalId: id,
           adminUsername: req.admin?.username
@@ -366,36 +415,41 @@ class WithdrawController {
         });
       }
 
-      const deletedWithdraw = await Transaction.findOneAndDelete({
-        _id: id,
-        isWithdraw: true
-      });
+      // Prevent deletion of approved withdrawals (financial integrity)
+      if (withdraw.status === 'approved') {
+        logger.warn('⚠️ Cannot delete approved withdrawal', {
+          withdrawalId: id,
+          adminUsername: req.admin?.username,
+          status: withdraw.status
+        });
+        return res.status(403).json({
+          success: false,
+          message: 'Cannot delete approved withdrawals. Approved transactions are immutable.'
+        });
+      }
+
+      await Transaction.findByIdAndDelete(id);
 
       // Create audit log
       await createAuditLog(req, res, {
         action: 'withdraw_deleted',
         resourceType: 'withdraw',
-        resourceId: id,
-        resourceName: `${withdrawToDelete.token_name} withdrawal - ${withdrawToDelete.amount}`,
-        deletedData: withdrawToDelete.toObject(),
-        description: `Deleted withdrawal: ${withdrawToDelete.token_name} ${withdrawToDelete.amount} (Status: ${withdrawToDelete.status})`
+        resourceId: withdraw._id.toString(),
+        resourceName: `${withdraw.token_name} withdrawal - ${withdraw.amount}`,
+        deletedData: withdraw.toObject(),
+        description: `Deleted ${withdraw.status} withdrawal: ${withdraw.token_name} ${withdraw.amount}`
       });
 
-      // Invalidate audit cache
       await invalidateAuditCache();
 
       logger.info('✅ Withdrawal deleted successfully', {
         withdrawalId: id,
-        adminUsername: req.admin?.username,
-        tokenName: withdrawToDelete.token_name,
-        amount: withdrawToDelete.amount,
-        status: withdrawToDelete.status
+        adminUsername: req.admin?.username
       });
 
       res.json({
         success: true,
-        message: 'Withdraw deleted successfully',
-        data: deletedWithdraw
+        message: 'Withdraw deleted successfully'
       });
     } catch (error) {
       logger.error('❌ Error deleting withdrawal', {
@@ -412,51 +466,33 @@ class WithdrawController {
     }
   }
 
-  // Get withdraw by ID
-  static async getWithdrawById(req, res) {
-    try {
-      const { id } = req.params;
-
-      const withdraw = await Transaction.findOne({
-        _id: id,
-        isWithdraw: true
-      });
-
-      if (!withdraw) {
-        return res.status(404).json({
-          success: false,
-          message: 'Withdraw not found'
-        });
-      }
-
-      res.json({
-        success: true,
-        data: withdraw
-      });
-    } catch (error) {
-      console.error('Error fetching withdraw:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch withdraw',
-        error: error.message
-      });
-    }
-  }
-
-  // Get withdraws by status for a user
+  // Get withdraws by status for a specific user
   static async getUserWithdrawsByStatus(req, res) {
     try {
       const { userId, status } = req.params;
 
+      // Validate user exists
       const validation = await validateUserExists(userId);
       if (!validation.ok) {
-        return res.status(validation.status).json({ success: false, message: validation.message });
+        return res.status(validation.status).json({ 
+          success: false, 
+          message: validation.message 
+        });
+      }
+
+      // Validate status is valid
+      const validStatuses = ['pending', 'approved', 'rejected'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+        });
       }
 
       const withdraws = await Transaction.find({
         user: userId,
         isWithdraw: true,
-        status
+        status: status
       }).sort({ createdAt: -1 });
 
       res.json({
@@ -468,7 +504,7 @@ class WithdrawController {
       console.error('Error fetching user withdraws by status:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to fetch withdraws by status',
+        message: 'Failed to fetch withdraws',
         error: error.message
       });
     }

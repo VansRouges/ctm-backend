@@ -1,12 +1,10 @@
 import Transaction from '../model/transaction.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
-import User from '../model/user.model.js';
-import { getTokenPrice } from '../utils/priceService.js';
+import DepositService from '../services/deposit.service.js';
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
 import logger from '../utils/logger.js';
-import mongoose from 'mongoose';
 
 class DepositController {
   // Get all deposits for a specific user
@@ -137,7 +135,7 @@ class DepositController {
     }
   }
 
-  // Update deposit
+ // Update deposit - SIMPLIFIED VERSION
   static async updateDeposit(req, res) {
     try {
       const { id } = req.params;
@@ -149,162 +147,139 @@ class DepositController {
         updates: Object.keys(updateData)
       });
 
-      // Ensure this remains a deposit
-      updateData.isDeposit = true;
-      updateData.isWithdraw = false;
-      const existing = await Transaction.findOne({ _id: id, isDeposit: true });
-      if (!existing) {
+      // Find the deposit
+      const deposit = await Transaction.findOne({ _id: id, isDeposit: true });
+      
+      if (!deposit) {
         logger.warn('⚠️ Deposit not found', {
           depositId: id,
           adminUsername: req.admin?.username
         });
-        return res.status(404).json({ success: false, message: 'Deposit not found' });
+        return res.status(404).json({ 
+          success: false, 
+          message: 'Deposit not found' 
+        });
       }
 
-      const prevStatus = existing.status;
+      const previousStatus = deposit.status;
+      const isApproving = previousStatus !== 'approved' && updateData.status === 'approved';
 
-      // Prevent editing amount/token once already approved
-      if (prevStatus === 'approved') {
-        const amountChange = updateData.amount !== undefined && updateData.amount !== existing.amount;
-        const tokenChange = updateData.token_name && updateData.token_name !== existing.token_name;
-        if (amountChange || tokenChange) {
-          logger.warn('⚠️ Cannot modify approved deposit', {
-            depositId: id,
-            adminUsername: req.admin?.username,
-            currentStatus: prevStatus
+      // Handle approval flow
+      if (isApproving) {
+        try {
+          const approvalResult = await DepositService.approveDeposit(
+            deposit, 
+            req.admin?.username
+          );
+
+          // Create audit log
+          await createAuditLog(req, res, {
+            action: 'deposit_approved',
+            resourceType: 'deposit',
+            resourceId: deposit._id.toString(),
+            resourceName: `${deposit.token_name} deposit - ${deposit.amount}`,
+            changes: {
+              before: { status: previousStatus },
+              after: { 
+                status: 'approved',
+                usdValue: approvalResult.usdValue,
+                userBalance: approvalResult.newBalance
+              }
+            },
+            description: `Approved ${deposit.token_name} deposit of ${deposit.amount} (USD $${approvalResult.usdValue.toFixed(2)})`
           });
-          return res.status(400).json({ success: false, message: 'Cannot modify amount or token_name after approval' });
+
+          await invalidateAuditCache();
+
+          return res.json({
+            success: true,
+            message: 'Deposit approved successfully',
+            data: deposit,
+            usdValueAdded: approvalResult.usdValue,
+            userNewBalance: approvalResult.newBalance
+          });
+
+        } catch (error) {
+          if (error.message === 'USER_NOT_FOUND') {
+            return res.status(404).json({ 
+              success: false, 
+              message: 'User not found for transaction' 
+            });
+          }
+          if (error.message === 'ALREADY_APPROVED') {
+            return res.status(400).json({ 
+              success: false, 
+              message: 'This deposit has already been approved' 
+            });
+          }
+          if (error.response || error.message?.toLowerCase().includes('price')) {
+            return res.status(502).json({ 
+              success: false, 
+              message: 'Failed to fetch token price', 
+              error: error.message 
+            });
+          }
+          throw error; // Re-throw unexpected errors
         }
       }
 
-      // Apply allowed updates
-      if (updateData.status) existing.status = updateData.status;
-      if (prevStatus !== 'approved') { // only editable pre-approval
-        if (updateData.amount !== undefined) existing.amount = updateData.amount;
-        if (updateData.token_name) existing.token_name = updateData.token_name;
-      }
-      if (updateData.token_deposit_address) existing.token_deposit_address = updateData.token_deposit_address;
+      // Handle non-approval updates (status changes to pending/rejected, or field updates)
+      try {
+        const updatedDeposit = await DepositService.updateDeposit(id, updateData);
 
-      const approving = prevStatus !== 'approved' && existing.status === 'approved';
-
-      if (approving) {
-        logger.info('✅ Approving deposit', {
-          depositId: id,
-          adminUsername: req.admin?.username,
-          amount: existing.amount,
-          token: existing.token_name
+        // Create audit log
+        await createAuditLog(req, res, {
+          action: 'deposit_updated',
+          resourceType: 'deposit',
+          resourceId: updatedDeposit._id.toString(),
+          resourceName: `${updatedDeposit.token_name} deposit - ${updatedDeposit.amount}`,
+          changes: {
+            before: { 
+              status: previousStatus,
+              amount: deposit.amount,
+              token_name: deposit.token_name
+            },
+            after: { 
+              status: updatedDeposit.status,
+              amount: updatedDeposit.amount,
+              token_name: updatedDeposit.token_name
+            }
+          },
+          description: `Updated deposit: ${updatedDeposit.token_name} ${updatedDeposit.amount}`
         });
 
-        const session = await mongoose.startSession();
-        try {
-          await session.withTransaction(async () => {
-            const price = await getTokenPrice(existing.token_name);
-            const usdValue = Number((price * existing.amount).toFixed(8));
-            const userDoc = await User.findById(existing.user).select('totalInvestment').session(session);
-            if (!userDoc) throw new Error('USER_NOT_FOUND');
+        await invalidateAuditCache();
 
-            // Persist snapshot fields ONLY if not already set
-            if (!existing.usdValue) {
-              existing.tokenPriceAtApproval = Number(price);
-              existing.usdValue = usdValue;
-              existing.approvedAt = new Date();
-            }
+        return res.json({
+          success: true,
+          message: 'Deposit updated successfully',
+          data: updatedDeposit
+        });
 
-            const previousBalance = userDoc.totalInvestment || 0;
-            userDoc.totalInvestment = Number((previousBalance + usdValue).toFixed(8));
-            await userDoc.save({ session });
-            await existing.save({ session });
-            existing.usdValue = usdValue;
-
-            logger.info('💰 Deposit approved and funds added', {
-              depositId: id,
-              adminUsername: req.admin?.username,
-              usdValueAdded: usdValue,
-              previousBalance,
-              newBalance: userDoc.totalInvestment
-            });
+      } catch (error) {
+        if (error.code === 'IMMUTABLE_DEPOSIT') {
+          return res.status(403).json({ 
+            success: false, 
+            message: error.message 
           });
-        } catch (err) {
-          session.endSession();
-          if (err.message === 'USER_NOT_FOUND') {
-            logger.error('❌ User not found for deposit approval', {
-              depositId: id,
-              userId: existing.user,
-              adminUsername: req.admin?.username
-            });
-            return res.status(404).json({ success: false, message: 'User not found for transaction' });
-          }
-          if (err.response || err.message?.toLowerCase().includes('price')) {
-            logger.error('❌ Price service error during deposit approval', {
-              error: err.message,
-              depositId: id,
-              token: existing.token_name
-            });
-            return res.status(502).json({ success: false, message: 'Failed to fetch token price', error: err.message });
-          }
-          logger.error('❌ Transaction error during deposit approval', {
-            error: err.message,
-            depositId: id,
-            adminUsername: req.admin?.username
-          });
-          return res.status(500).json({ success: false, message: 'Failed during approval transaction', error: err.message });
-        } finally {
-          session.endSession();
         }
-      } else {
-        await existing.save();
+        if (error.message === 'DEPOSIT_NOT_FOUND') {
+          return res.status(404).json({ 
+            success: false, 
+            message: 'Deposit not found' 
+          });
+        }
+        throw error;
       }
 
-      // Create audit log for deposit update
-      const statusChanged = prevStatus !== existing.status;
-      const actionType = statusChanged ? 'deposit_status_changed' : 'deposit_updated';
-      
-      await createAuditLog(req, res, {
-        action: actionType,
-        resourceType: 'deposit',
-        resourceId: existing._id.toString(),
-        resourceName: `${existing.token_name} deposit - ${existing.amount}`,
-        changes: {
-          before: { 
-            status: prevStatus,
-            amount: req.body.amount !== undefined ? (existing.amount - (req.body.amount - existing.amount)) : existing.amount,
-            token_name: req.body.token_name ? (existing.token_name === req.body.token_name ? existing.token_name : 'changed') : existing.token_name
-          },
-          after: { 
-            status: existing.status,
-            amount: existing.amount,
-            token_name: existing.token_name
-          }
-        },
-        description: statusChanged ? 
-          `Deposit status changed from ${prevStatus} to ${existing.status} for ${existing.token_name} ${existing.amount}` :
-          `Updated deposit: ${existing.token_name} ${existing.amount}`
-      });
-
-      // Invalidate audit cache
-      await invalidateAuditCache();
-
-      logger.info('✅ Deposit updated successfully', {
-        depositId: id,
-        adminUsername: req.admin?.username,
-        newStatus: existing.status,
-        tokenName: existing.token_name,
-        amount: existing.amount
-      });
-
-      return res.json({
-        success: true,
-        message: 'Deposit updated successfully',
-        data: existing,
-        ...(existing.usdValue ? { usdValueAdded: existing.usdValue } : {})
-      });
     } catch (error) {
       logger.error('❌ Error updating deposit', {
         error: error.message,
+        stack: error.stack,
         depositId: req.params.id,
         adminId: req.admin?.id
       });
-      console.error('Error updating deposit:', error);
+      
       res.status(500).json({
         success: false,
         message: 'Failed to update deposit',

@@ -8,24 +8,11 @@ class CopytradingOptionController {
 
   static async getAllCopytradingOptions(req, res) {
     try {
-      logger.info('📊 Fetching all copytrading options', {
-        adminUsername: req.admin?.username
-      });
+      logger.info('📊 Fetching all copytrading options');
 
       const copytradingOptions = await CopytradingOption.find().sort({ createdAt: -1 });
 
-      // Create audit log
-      await createAuditLog(req, res, {
-        action: 'copytrading_options_view_all',
-        resourceType: 'copytrading_option',
-        description: `Admin ${req.admin?.username || 'unknown'} viewed all copytrading options (${copytradingOptions.length} options)`
-      });
-
-      // Invalidate audit cache
-      await invalidateAuditCache();
-
       logger.info('✅ Copytrading options retrieved successfully', {
-        adminUsername: req.admin?.username,
         count: copytradingOptions.length
       });
 
@@ -33,7 +20,6 @@ class CopytradingOptionController {
     } catch (error) {
       logger.error('❌ Error fetching copytrading options', {
         error: error.message,
-        adminId: req.admin?.id
       });
       console.error('Error fetching copytrading options:', error);
       res.status(500).json({ success: false, message: 'Failed to fetch copytrading options', error: error.message });
