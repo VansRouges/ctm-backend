@@ -1,27 +1,27 @@
 // controllers/cleanup.controller.js
-// Admin endpoints to manage orphaned transactions cleanup
-import OrphanedTransactionsCleaner from '../jobs/orphaned-transactions-cleaner.job.js';
+// Admin endpoints to manage orphaned data cleanup
+import OrphanedDataCleaner from '../jobs/orphaned-data-cleaner.job.js';
 import logger from '../utils/logger.js';
 
-// Create a singleton instance
-const cleaner = new OrphanedTransactionsCleaner();
+// Create singleton instance
+const orphanedDataCleaner = new OrphanedDataCleaner();
 
 class CleanupController {
   /**
-   * Manually trigger orphaned transactions cleanup
+   * Manually trigger orphaned data cleanup (Transactions, Portfolio, CryptoOption, etc.)
    */
   static async triggerCleanup(req, res) {
     try {
-      logger.info('🔄 Admin triggered orphaned transactions cleanup', {
+      logger.info('🔄 Admin triggered orphaned data cleanup', {
         adminUsername: req.admin?.username,
         adminId: req.admin?.id
       });
 
-      const stats = await cleaner.triggerManualCleanup();
+      const stats = await orphanedDataCleaner.triggerManualCleanup();
 
       res.json({
         success: true,
-        message: 'Orphaned transactions cleanup completed',
+        message: 'Orphaned data cleanup completed',
         data: stats
       });
     } catch (error) {
@@ -43,7 +43,7 @@ class CleanupController {
    */
   static async getStatus(req, res) {
     try {
-      const status = cleaner.getStatus();
+      const status = orphanedDataCleaner.getStatus();
 
       res.json({
         success: true,

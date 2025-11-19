@@ -3,7 +3,7 @@ import connectToDatabase from './database/mongodb.js';
 import app from './app.js';
 import StockUpdater from './jobs/stock-updater.jobs.js'; // DISABLED FOR NOW
 import redisClient from './config/redis.js';
-import OrphanedTransactionsCleaner from './jobs/orphaned-transactions-cleaner.job.js';
+import OrphanedDataCleaner from './jobs/orphaned-data-cleaner.job.js';
 
 const port = PORT || process.env.PORT || 5000;
 
@@ -25,9 +25,9 @@ const port = PORT || process.env.PORT || 5000;
     const interval = Number(process.env.UPDATE_INTERVAL_MINUTES) || 360;
     stockUpdater.startScheduler(interval);
 
-     // Start orphaned transactions cleaner cron job
-    const transactionsCleaner = new OrphanedTransactionsCleaner();
-    transactionsCleaner.startScheduler();
+    // Start orphaned data cleaner cron job (Transactions, Portfolio, CryptoOption, etc.)
+    const orphanedDataCleaner = new OrphanedDataCleaner();
+    orphanedDataCleaner.startScheduler();
     
     // Start server
     app.listen(port, () => console.log(`CTM API running on http://0.0.0.0:${port}`));
