@@ -43,7 +43,8 @@ const corsOptions = {
     'http://localhost:3000',
     'https://www.copytradingmarkets.com',
     'https://ctm-user-end.vercel.app',
-    'https://admin-ctm.vercel.app'
+    'https://admin-ctm.vercel.app',
+    'https://3000-firebase-ctm-user-endgit-1763559556624.cluster-fbfjltn375c6wqxlhoehbz44sk.cloudworkstations.dev'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
