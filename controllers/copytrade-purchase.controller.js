@@ -3,24 +3,18 @@ import { validateUserExists, validateBodyUser } from '../utils/userValidation.js
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
+import CopytradePurchaseService from '../services/copytrade-purchase.service.js';
+import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 
 class CopytradePurchaseController {
   static async createCopytradePurchase(req, res) {
     try {
       const {
-        user,
-        trade_title,
-        trade_max,
-        trade_min,
-        trade_risk,
-        trade_roi_min,
-        trade_roi_max,
-        trade_duration,
+        copytradeOptionId,
         initial_investment,
         trade_current_value,
         trade_profit_loss,
-        trade_status,
         trade_token,
         trade_token_address,
         trade_win_rate,
@@ -28,97 +22,175 @@ class CopytradePurchaseController {
         trade_end_date
       } = req.body;
 
+      // Get user ID from authenticated user (not from request body)
+      const user = req.user?.userId;
+      if (!user) {
+        return res.status(401).json({ success: false, message: 'User authentication required' });
+      }
+
       logger.info('📝 Creating copytrade purchase', {
-        adminUsername: req.admin?.username,
-        trade_title,
-        user,
-        initial_investment,
-        trade_token
+        userId: user,
+        userEmail: req.user?.email,
+        copytradeOptionId,
+        initial_investment
       });
 
-      const required = [ 'user','trade_title','trade_max','trade_min','trade_risk','trade_roi_min','trade_roi_max','trade_duration','initial_investment','trade_current_value','trade_token','trade_token_address' ];
+      // Validate required fields
+      const required = ['copytradeOptionId', 'initial_investment'];
       for (const f of required) {
         if (req.body[f] === undefined || req.body[f] === null || req.body[f] === '') {
           logger.warn('⚠️ Missing required field for copytrade purchase', {
             field: f,
-            adminUsername: req.admin?.username
+            userId: user
           });
           return res.status(400).json({ success: false, message: `${f} is required` });
         }
       }
 
-      const validation = await validateBodyUser(user);
-      if (!validation.ok) {
-        logger.warn('⚠️ User validation failed', {
+      // Use MongoDB transaction for atomicity
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
+      try {
+        // Create purchase (status: pending, no balance deduction)
+        const result = await CopytradePurchaseService.createPurchase({
+          user,
+          copytradeOptionId,
+          initial_investment,
+          trade_current_value,
+          trade_profit_loss,
+          trade_token,
+          trade_token_address,
+          trade_win_rate,
+          trade_approval_date,
+          trade_end_date
+        }, session);
+
+        await session.commitTransaction();
+        const saved = result.purchase;
+      
+        // Create notification for admin
+        await createNotification({
+          action: 'copytrade_purchase',
           userId: user,
-          error: validation.message,
-          adminUsername: req.admin?.username
+          metadata: {
+            amount: initial_investment,
+            planName: saved.trade_title,
+            referenceId: saved._id.toString()
+          }
         });
-        return res.status(validation.status).json({ success: false, message: validation.message });
-      }
 
-      const doc = new CopytradePurchase({
-        user,
-        trade_title,
-        trade_max,
-        trade_min,
-        trade_risk,
-        trade_roi_min,
-        trade_roi_max,
-        trade_duration,
-        initial_investment,
-        trade_current_value,
-        trade_profit_loss: trade_profit_loss !== undefined ? trade_profit_loss : trade_current_value - initial_investment,
-        trade_status: trade_status || 'active',
-        trade_token,
-        trade_token_address,
-        trade_win_rate,
-        trade_approval_date,
-        trade_end_date
-      });
+        // // Create audit log
+        // await createAuditLog(req, res, {
+        //   action: 'copytrade_purchase_create',
+        //   resourceType: 'copytrade_purchase',
+        //   resourceId: saved._id.toString(),
+        //   resourceName: saved.trade_title,
+        //   description: `Created copytrade purchase: ${saved.trade_title} - ${saved.initial_investment} ${saved.trade_token}`
+        // });
 
-      const saved = await doc.save();
-      
-      // Create notification for admin
-      await createNotification({
-        action: 'copytrade_purchase',
-        userId: user,
-        metadata: {
-          amount: initial_investment,
-          currency: trade_token,
-          planName: trade_title,
-          referenceId: saved._id.toString()
+        // Invalidate audit cache
+        await invalidateAuditCache();
+
+        logger.info('✅ Copytrade purchase created successfully (pending approval)', {
+          purchaseId: saved._id,
+          userId: user,
+          userEmail: req.user?.email,
+          trade_title: saved.trade_title,
+          initial_investment: saved.initial_investment,
+          status: saved.trade_status
+        });
+        
+        res.status(201).json({ 
+          success: true, 
+          message: 'Copytrade purchase created successfully (pending approval)', 
+          data: {
+            purchase: saved,
+            note: 'Balance will be deducted when admin approves (status changes to active)'
+          }
+        });
+      } catch (error) {
+        await session.abortTransaction();
+        
+        // Handle specific error types
+        if (error.message === 'INSUFFICIENT_BALANCE_FOR_PURCHASE') {
+          logger.warn('⚠️ Insufficient balance for copytrade purchase', {
+            userId: user,
+            error: error.message,
+            data: error.data,
+            userEmail: req.user?.email
+          });
+          return res.status(400).json({
+            success: false,
+            message: `User does not have sufficient balance. Minimum required: $${error.data.required}, Available: $${error.data.available}`,
+            error: error.message,
+            data: error.data
+          });
         }
-      });
 
-      // // Create audit log
-      // await createAuditLog(req, res, {
-      //   action: 'copytrade_purchase_create',
-      //   resourceType: 'copytrade_purchase',
-      //   resourceId: saved._id.toString(),
-      //   resourceName: saved.trade_title,
-      //   description: `Created copytrade purchase: ${saved.trade_title} - ${saved.initial_investment} ${saved.trade_token}`
-      // });
+        if (error.message === 'INSUFFICIENT_FUNDS') {
+          logger.warn('⚠️ Insufficient funds for copytrade purchase', {
+            userId: user,
+            error: error.message,
+            data: error.data,
+            userEmail: req.user?.email
+          });
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient funds. Required: $${error.data.required}, Available: $${error.data.available}`,
+            error: error.message,
+            data: error.data
+          });
+        }
 
-      // Invalidate audit cache
-      await invalidateAuditCache();
+        if (error.message === 'INVESTMENT_BELOW_MINIMUM') {
+          logger.warn('⚠️ Investment below minimum', {
+            userId: user,
+            error: error.message,
+            data: error.data,
+            userEmail: req.user?.email
+          });
+          return res.status(400).json({
+            success: false,
+            message: `Investment amount is below minimum. Minimum: $${error.data.minimum}, Provided: $${error.data.investment}`,
+            error: error.message,
+            data: error.data
+          });
+        }
 
-      logger.info('✅ Copytrade purchase created successfully', {
-        purchaseId: saved._id,
-        adminUsername: req.admin?.username,
-        trade_title: saved.trade_title,
-        initial_investment: saved.initial_investment,
-        trade_token: saved.trade_token
-      });
-      
-      res.status(201).json({ success: true, message: 'Copytrade purchase created successfully', data: saved });
+        if (error.message === 'COPYTRADE_OPTION_NOT_FOUND') {
+          logger.warn('⚠️ Copytrade option not found', {
+            copytradeOptionId: req.body.copytradeOptionId,
+            error: error.message,
+            userId: user,
+            userEmail: req.user?.email
+          });
+          return res.status(404).json({
+            success: false,
+            message: 'Copytrade option not found',
+            error: error.message,
+            data: error.data
+          });
+        }
+
+        logger.error('❌ Error creating copytrade purchase', {
+          error: error.message,
+          userId: user,
+          userEmail: req.user?.email,
+          copytradeOptionId: req.body?.copytradeOptionId,
+          stack: error.stack
+        });
+        console.error('Error creating copytrade purchase:', error);
+        res.status(500).json({ success: false, message: 'Failed to create copytrade purchase', error: error.message });
+      } finally {
+        session.endSession();
+      }
     } catch (error) {
-      logger.error('❌ Error creating copytrade purchase', {
+      logger.error('❌ Unexpected error creating copytrade purchase', {
         error: error.message,
-        adminId: req.admin?.id,
-        trade_title: req.body?.trade_title
+        stack: error.stack
       });
-      console.error('Error creating copytrade purchase:', error);
+      console.error('Unexpected error creating copytrade purchase:', error);
       res.status(500).json({ success: false, message: 'Failed to create copytrade purchase', error: error.message });
     }
   }
@@ -160,36 +232,55 @@ class CopytradePurchaseController {
   static async getCopytradePurchaseById(req, res) {
     try {
       const { id } = req.params;
+      const userId = req.user?.userId;
+      const isAdmin = req.admin?.id;
 
       logger.info('🔍 Fetching copytrade purchase by ID', {
         purchaseId: id,
-        adminUsername: req.admin?.username
+        userId: userId || undefined,
+        adminId: isAdmin || undefined
       });
 
       const doc = await CopytradePurchase.findById(id);
       if (!doc) {
         logger.warn('⚠️ Copytrade purchase not found', {
           purchaseId: id,
-          adminUsername: req.admin?.username
+          userId: userId || undefined,
+          adminId: isAdmin || undefined
         });
         return res.status(404).json({ success: false, message: 'Copytrade purchase not found' });
       }
 
-      // Create audit log
-      await createAuditLog(req, res, {
-        action: 'copytrade_purchase_viewed',
-        resourceType: 'copytrade_purchase',
-        resourceId: doc._id.toString(),
-        resourceName: doc.trade_title,
-        description: `Viewed copytrade purchase: ${doc.trade_title}`
-      });
+      // If user (not admin), verify they own this purchase
+      if (userId && !isAdmin) {
+        if (doc.user.toString() !== userId) {
+          logger.warn('⚠️ User attempted to access another user\'s purchase', {
+            purchaseId: id,
+            userId,
+            purchaseUserId: doc.user.toString()
+          });
+          return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+      }
 
-      // Invalidate audit cache
-      await invalidateAuditCache();
+      // Create audit log (only for admin)
+      if (isAdmin) {
+        await createAuditLog(req, res, {
+          action: 'copytrade_purchase_viewed',
+          resourceType: 'copytrade_purchase',
+          resourceId: doc._id.toString(),
+          resourceName: doc.trade_title,
+          description: `Viewed copytrade purchase: ${doc.trade_title}`
+        });
+
+        // Invalidate audit cache
+        await invalidateAuditCache();
+      }
 
       logger.info('✅ Copytrade purchase retrieved successfully', {
         purchaseId: id,
-        adminUsername: req.admin?.username,
+        userId: userId || undefined,
+        adminId: isAdmin || undefined,
         trade_title: doc.trade_title,
         trade_status: doc.trade_status
       });
@@ -199,10 +290,25 @@ class CopytradePurchaseController {
       logger.error('❌ Error fetching copytrade purchase', {
         error: error.message,
         purchaseId: req.params.id,
+        userId: req.user?.userId,
         adminId: req.admin?.id
       });
       console.error('Error fetching copytrade purchase:', error);
       res.status(500).json({ success: false, message: 'Failed to fetch copytrade purchase', error: error.message });
+    }
+  }
+
+  static async getMyCopytradePurchases(req, res) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: 'User authentication required' });
+      }
+      const items = await CopytradePurchase.find({ user: userId }).sort({ createdAt: -1 });
+      res.json({ success: true, data: items, count: items.length });
+    } catch (error) {
+      console.error('Error fetching user copytrade purchases:', error);
+      res.status(500).json({ success: false, message: 'Failed to fetch copytrade purchases', error: error.message });
     }
   }
 
@@ -250,6 +356,110 @@ class CopytradePurchaseController {
           adminUsername: req.admin?.username
         });
         return res.status(404).json({ success: false, message: 'Copytrade purchase not found' });
+      }
+
+      // Handle status change from 'pending' to 'active' (approval)
+      if (oldData.trade_status === 'pending' && updateData.trade_status === 'active') {
+        const session = await mongoose.startSession();
+        session.startTransaction();
+
+        try {
+          // Approve purchase and deduct from portfolio
+          const approvalResult = await CopytradePurchaseService.approvePurchase(
+            oldData,
+            req.admin?.username || 'unknown',
+            session
+          );
+
+          await session.commitTransaction();
+
+          logger.info('✅ Copytrade purchase approved with portfolio deduction', {
+            purchaseId: id,
+            adminUsername: req.admin?.username,
+            deductions: approvalResult.deductions,
+            newAccountBalance: approvalResult.newAccountBalance
+          });
+
+          // Create audit log
+          await createAuditLog(req, res, {
+            action: 'copytrade_purchase_approved',
+            resourceType: 'copytrade_purchase',
+            resourceId: oldData._id.toString(),
+            resourceName: oldData.trade_title,
+            description: `Approved copytrade purchase: ${oldData.trade_title} - ${oldData.initial_investment} ${oldData.trade_token}`,
+            metadata: {
+              deductions: approvalResult.deductions,
+              newAccountBalance: approvalResult.newAccountBalance
+            }
+          });
+
+          await invalidateAuditCache();
+
+          return res.json({
+            success: true,
+            message: 'Copytrade purchase approved successfully',
+            data: {
+              purchase: approvalResult.purchase,
+              deductions: approvalResult.deductions,
+              newAccountBalance: approvalResult.newAccountBalance
+            }
+          });
+        } catch (error) {
+          await session.abortTransaction();
+
+          // Handle specific errors
+          if (error.message === 'INSUFFICIENT_PORTFOLIO_VALUE') {
+            logger.warn('⚠️ Insufficient portfolio value for copytrade purchase approval', {
+              purchaseId: id,
+              error: error.message,
+              data: error.data,
+              adminUsername: req.admin?.username
+            });
+            return res.status(400).json({
+              success: false,
+              message: `Insufficient portfolio value. Required: $${error.data.required}, Available: $${error.data.available}`,
+              error: error.message,
+              data: error.data
+            });
+          }
+
+          if (error.message === 'NO_PORTFOLIO_ENTRIES') {
+            logger.warn('⚠️ No portfolio entries for copytrade purchase approval', {
+              purchaseId: id,
+              error: error.message,
+              adminUsername: req.admin?.username
+            });
+            return res.status(400).json({
+              success: false,
+              message: 'User has no portfolio entries',
+              error: error.message
+            });
+          }
+
+          logger.error('❌ Error approving copytrade purchase', {
+            purchaseId: id,
+            error: error.message,
+            stack: error.stack,
+            adminUsername: req.admin?.username
+          });
+          throw error;
+        } finally {
+          session.endSession();
+        }
+      }
+
+      // Prevent changing status from 'active' back to 'pending' or other statuses
+      if (oldData.trade_status === 'active' && updateData.trade_status && updateData.trade_status !== 'active') {
+        logger.warn('⚠️ Attempted to change status of approved copytrade purchase', {
+          purchaseId: id,
+          currentStatus: oldData.trade_status,
+          attemptedStatus: updateData.trade_status,
+          adminUsername: req.admin?.username
+        });
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot change status of an approved (active) copytrade purchase'
+        });
       }
 
       if (updateData.trade_current_value !== undefined || updateData.initial_investment !== undefined) {

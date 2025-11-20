@@ -4,14 +4,50 @@ import logger from '../utils/logger.js';
 
 class PortfolioController {
   /**
-   * Get user's portfolio
+   * Get authenticated user's portfolio (User endpoint)
+   * GET /api/v1/portfolio/my-portfolio
+   */
+  static async getMyPortfolio(req, res) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User authentication required'
+        });
+      }
+
+      logger.info('📊 Fetching user portfolio', { userId });
+
+      const portfolio = await PortfolioService.getUserPortfolio(userId);
+
+      res.json({
+        success: true,
+        data: portfolio
+      });
+    } catch (error) {
+      logger.error('❌ Error fetching user portfolio', {
+        error: error.message,
+        userId: req.user?.userId
+      });
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch portfolio',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get user's portfolio (Admin endpoint)
    * GET /api/v1/portfolio/user/:userId
    */
   static async getUserPortfolio(req, res) {
     try {
       const { userId } = req.params;
 
-      logger.info('📊 Fetching user portfolio', { userId });
+      logger.info('📊 Admin fetching user portfolio', { userId, adminId: req.admin?.id });
 
       const portfolio = await PortfolioService.getUserPortfolio(userId);
 
@@ -34,14 +70,48 @@ class PortfolioController {
   }
 
   /**
-   * Get user's available tokens for withdrawal
+   * Get authenticated user's available tokens (User endpoint)
+   * GET /api/v1/portfolio/my-available-tokens
+   */
+  static async getMyAvailableTokens(req, res) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User authentication required'
+        });
+      }
+
+      const tokens = await PortfolioService.getUserAvailableTokens(userId);
+
+      res.json({
+        success: true,
+        data: tokens
+      });
+    } catch (error) {
+      logger.error('❌ Error fetching available tokens', {
+        error: error.message,
+        userId: req.user?.userId
+      });
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch available tokens',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get user's available tokens (Admin endpoint)
    * GET /api/v1/portfolio/user/:userId/available-tokens
    */
   static async getAvailableTokens(req, res) {
     try {
       const { userId } = req.params;
 
-      const tokens =  PortfolioService.getUserAvailableTokens(userId);
+      const tokens = await PortfolioService.getUserAvailableTokens(userId);
 
       res.json({
         success: true,
@@ -62,17 +132,25 @@ class PortfolioController {
   }
 
   /**
-   * Validate withdrawal amount
+   * Validate withdrawal amount (User endpoint)
    * POST /api/v1/portfolio/validate-withdrawal
    */
   static async validateWithdrawal(req, res) {
     try {
-      const { userId, tokenName, amount } = req.body;
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User authentication required'
+        });
+      }
 
-      if (!userId || !tokenName || !amount) {
+      const { tokenName, amount } = req.body;
+
+      if (!tokenName || !amount) {
         return res.status(400).json({
           success: false,
-          message: 'userId, tokenName, and amount are required'
+          message: 'tokenName and amount are required'
         });
       }
 
@@ -89,6 +167,7 @@ class PortfolioController {
     } catch (error) {
       logger.error('❌ Error validating withdrawal', {
         error: error.message,
+        userId: req.user?.userId,
         body: req.body
       });
 

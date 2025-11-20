@@ -69,13 +69,16 @@ const copytradePurchaseSchema = new mongoose.Schema({
   },
   trade_token: { 
       type: String, 
-      required: true, 
       trim: true 
   },
   trade_token_address: { 
       type: String, 
-      required: true, 
       trim: true 
+  },
+  copytradeOption: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'CopytradingOption',
+    index: true
   },
   trade_approval_date: { 
       type: String, 

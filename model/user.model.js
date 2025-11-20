@@ -66,10 +66,6 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  currentValue: {
-    type: Number,
-    default: 0
-  },
   accountStatus: {
     type: Boolean,
     default: false
