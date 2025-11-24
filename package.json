@@ -12,7 +12,7 @@
     "lint": "eslint . --ext .js --max-warnings=0",
     "prepare": "husky install",
     "pre-commit": "node scripts/pre-commit-check.js",
-    "cleanup-orphaned": "node -e \"import('./jobs/orphaned-transactions-cleaner.job.js').then(m => new m.default().triggerManualCleanup())\""
+    "cleanup-orphaned-data": "node -e \"import('./jobs/orphaned-data-cleaner.job.js').then(m => new m.default().triggerManualCleanup())\""
   },
   "keywords": [],
   "author": "",

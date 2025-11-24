@@ -171,7 +171,8 @@ export interface User {
   kycStatus: boolean;
   accountStatus: string;
   role: string;
-  currentValue: number;
+  totalInvestment: number;
+  accountBalance: number;
   createdAt: string;
   lastLogin?: string;
 }
@@ -426,7 +427,8 @@ After successful authentication, you'll receive:
   "kycStatus": false,
   "accountStatus": "active",
   "role": "user",
-  "currentValue": 0,
+  "totalInvestment": 0,
+  "accountBalance": 0,
   "createdAt": "2025-10-15T...",
   "lastLogin": "2025-10-15T..."
 }
