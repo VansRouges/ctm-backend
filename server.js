@@ -4,6 +4,7 @@ import app from './app.js';
 import StockUpdater from './jobs/stock-updater.jobs.js'; // DISABLED FOR NOW
 import redisClient from './config/redis.js';
 import OrphanedDataCleaner from './jobs/orphaned-data-cleaner.job.js';
+import CopytradeTradingJob from './jobs/copytrade-trading.job.js';
 
 const port = PORT || process.env.PORT || 5000;
 
@@ -28,6 +29,10 @@ const port = PORT || process.env.PORT || 5000;
     // Start orphaned data cleaner cron job (Transactions, Portfolio, CryptoOption, etc.)
     const orphanedDataCleaner = new OrphanedDataCleaner();
     orphanedDataCleaner.startScheduler();
+
+    // Start copytrade trading job (updates active trades hourly and completes expired trades)
+    const copytradeTradingJob = new CopytradeTradingJob();
+    copytradeTradingJob.startScheduler();
     
     // Start server
     app.listen(port, () => console.log(`CTM API running on http://0.0.0.0:${port}`));

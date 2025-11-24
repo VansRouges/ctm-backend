@@ -15,8 +15,6 @@ class CopytradePurchaseController {
         initial_investment,
         trade_current_value,
         trade_profit_loss,
-        trade_token,
-        trade_token_address,
         trade_win_rate,
         trade_approval_date,
         trade_end_date
@@ -59,8 +57,6 @@ class CopytradePurchaseController {
           initial_investment,
           trade_current_value,
           trade_profit_loss,
-          trade_token,
-          trade_token_address,
           trade_win_rate,
           trade_approval_date,
           trade_end_date
@@ -80,14 +76,14 @@ class CopytradePurchaseController {
           }
         });
 
-        // // Create audit log
-        // await createAuditLog(req, res, {
-        //   action: 'copytrade_purchase_create',
-        //   resourceType: 'copytrade_purchase',
-        //   resourceId: saved._id.toString(),
-        //   resourceName: saved.trade_title,
-        //   description: `Created copytrade purchase: ${saved.trade_title} - ${saved.initial_investment} ${saved.trade_token}`
-        // });
+        // Create audit log
+        await createAuditLog(req, res, {
+          action: 'copytrade_purchase_create',
+          resourceType: 'copytrade_purchase',
+          resourceId: saved._id.toString(),
+          resourceName: saved.trade_title,
+          description: `Created copytrade purchase: ${saved.trade_title} - $${saved.initial_investment}`
+        });
 
         // Invalidate audit cache
         await invalidateAuditCache();
@@ -386,7 +382,7 @@ class CopytradePurchaseController {
             resourceType: 'copytrade_purchase',
             resourceId: oldData._id.toString(),
             resourceName: oldData.trade_title,
-            description: `Approved copytrade purchase: ${oldData.trade_title} - ${oldData.initial_investment} ${oldData.trade_token}`,
+            description: `Approved copytrade purchase: ${oldData.trade_title} - $${oldData.initial_investment}`,
             metadata: {
               deductions: approvalResult.deductions,
               newAccountBalance: approvalResult.newAccountBalance
@@ -576,8 +572,7 @@ class CopytradePurchaseController {
         purchaseId: id,
         adminUsername: req.admin?.username,
         trade_title: deleted.trade_title,
-        initial_investment: deleted.initial_investment,
-        trade_token: deleted.trade_token
+        initial_investment: deleted.initial_investment
       });
 
       res.json({ success: true, message: 'Copytrade purchase deleted successfully', data: deleted });

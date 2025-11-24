@@ -58,8 +58,6 @@ Authorization: Bearer YOUR_USER_JWT_TOKEN
 |-------|------|-------------|
 | `trade_current_value` | Number | Initial current value (defaults to `initial_investment`) |
 | `trade_profit_loss` | Number | Initial profit/loss (defaults to 0) |
-| `trade_token` | String | Token symbol (optional, not used) |
-| `trade_token_address` | String | Token contract address (optional, not used) |
 | `trade_win_rate` | Number | Win rate percentage (optional) |
 
 **Note:** The `user` field is automatically set from the authenticated user's token. Do not send it in the request.
@@ -404,7 +402,5 @@ cancelled
 
 - `trade_current_value` - Defaults to `initial_investment`
 - `trade_profit_loss` - Defaults to 0
-- `trade_token` - Not used (optional)
-- `trade_token_address` - Not used (optional)
 - `trade_win_rate` - Optional metadata
 

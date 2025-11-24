@@ -39,6 +39,7 @@ const copytradingOptionSchema = new mongoose.Schema({
   },
   trade_risk: {
     type: String,
+    enum: ['low', 'medium', 'high'],
     required: true,
     trim: true
   },

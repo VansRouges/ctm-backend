@@ -23,6 +23,7 @@ const copytradePurchaseSchema = new mongoose.Schema({
   },
   trade_risk: { 
       type: String, 
+      enum: ['low', 'medium', 'high'],
       required: true, 
       trim: true 
   },
@@ -65,15 +66,7 @@ const copytradePurchaseSchema = new mongoose.Schema({
       index: true 
   },
   trade_win_rate: { 
-      type: Number 
-  },
-  trade_token: { 
-      type: String, 
-      trim: true 
-  },
-  trade_token_address: { 
-      type: String, 
-      trim: true 
+    type: Number 
   },
   copytradeOption: {
     type: mongoose.Schema.Types.ObjectId,
@@ -84,9 +77,13 @@ const copytradePurchaseSchema = new mongoose.Schema({
       type: String, 
       trim: true 
   },
+  trade_start_date: {
+      type: Date,
+      index: true
+  },
   trade_end_date: { 
-      type: String, 
-      trim: true 
+      type: Date,
+      index: true
   }
 }, { 
     timestamps: true 
@@ -95,6 +92,7 @@ const copytradePurchaseSchema = new mongoose.Schema({
 copytradePurchaseSchema.index({ trade_status: 1 });
 copytradePurchaseSchema.index({ isProfit: 1 });
 copytradePurchaseSchema.index({ user: 1, trade_status: 1 });
+copytradePurchaseSchema.index({ trade_status: 1, trade_end_date: 1 }); // For efficient querying of active trades
 
 copytradePurchaseSchema.pre('save', function(next) {
   if (this.isModified('trade_current_value') || this.isModified('initial_investment')) {

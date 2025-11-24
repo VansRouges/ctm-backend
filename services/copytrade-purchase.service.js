@@ -6,6 +6,7 @@ import CopytradingOption from '../model/copytrading-option.model.js';
 import User from '../model/user.model.js';
 import Portfolio from '../model/portfolio.model.js';
 import PortfolioService from './portfolio.service.js';
+import BalanceService from './balance.service.js';
 import { getTokenPrice } from '../utils/priceService.js';
 import logger from '../utils/logger.js';
 
@@ -118,8 +119,6 @@ class CopytradePurchaseService {
         ? purchaseData.trade_profit_loss 
         : trade_current_value - initial_investment,
       trade_status: 'pending', // Always pending on creation
-      trade_token: purchaseData.trade_token || null, // Optional
-      trade_token_address: purchaseData.trade_token_address || null, // Optional
       trade_win_rate: purchaseData.trade_win_rate || null,
       trade_approval_date: purchaseData.trade_approval_date || null,
       trade_end_date: purchaseData.trade_end_date || null
@@ -247,9 +246,16 @@ class CopytradePurchaseService {
     // Recalculate accountBalance from remaining portfolio values
     const newAccountBalance = await PortfolioService.recalculateAccountBalance(userId, session);
 
-    // Update purchase status to 'active'
+    // Set trade start date and calculate end date (duration in days)
+    const tradeStartDate = new Date();
+    const tradeEndDate = new Date(tradeStartDate);
+    tradeEndDate.setDate(tradeEndDate.getDate() + purchase.trade_duration);
+
+    // Update purchase status to 'active' and set trading dates
     purchase.trade_status = 'active';
-    purchase.trade_approval_date = new Date().toISOString();
+    purchase.trade_approval_date = tradeStartDate.toISOString();
+    purchase.trade_start_date = tradeStartDate;
+    purchase.trade_end_date = tradeEndDate;
     await purchase.save({ session });
 
     logger.info('✅ Copytrade purchase approved with portfolio deduction', {
