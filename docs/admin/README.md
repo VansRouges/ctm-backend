@@ -36,6 +36,27 @@ Endpoints for admins to:
 
 ---
 
+### 👤 Admin User Actions API
+**File:** `ADMIN_USER_ACTIONS.md`
+
+Endpoints for admins to perform actions **on behalf of users**:
+- Create deposits for users (with optional auto-approval)
+- Create withdrawals for users (with optional auto-approval)
+- Create copytrade purchases for users (with optional auto-approval)
+
+**Key Endpoints:**
+- `POST /api/v1/deposits/admin` - Create deposit for user
+- `POST /api/v1/withdraws/admin` - Create withdrawal for user
+- `POST /api/v1/copytrade-purchase/admin` - Create copytrade purchase for user
+
+**Features:**
+- Optional `autoApprove` flag for immediate processing
+- Automatic balance validation
+- Audit logging for all actions
+- User notifications
+
+---
+
 ## Authentication
 
 All endpoints require admin authentication. Include the admin JWT token in the Authorization header:

@@ -1,5 +1,6 @@
 // controllers/withdraw.controller.js (SIMPLIFIED & REFACTORED)
 import Transaction from '../model/transaction.model.js';
+import User from '../model/user.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
 import WithdrawService from '../services/withdraw.service.js';
 import { createNotification } from '../utils/notificationHelper.js';
@@ -505,6 +506,256 @@ class WithdrawController {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch withdraws',
+        error: error.message
+      });
+    }
+  }
+
+  // Admin: Create withdrawal on behalf of a user
+  static async createWithdrawForUser(req, res) {
+    try {
+      const { userId, token_name, amount, token_withdraw_address, autoApprove } = req.body;
+
+      logger.info('💸 Admin creating withdrawal for user', {
+        adminUsername: req.admin?.username,
+        adminId: req.admin?.id,
+        userId,
+        token_name,
+        amount
+      });
+
+      // Validate required fields
+      if (!userId || !token_name || !amount) {
+        return res.status(400).json({
+          success: false,
+          message: 'Required fields: userId, token_name, amount'
+        });
+      }
+
+      // Validate user exists and is not an admin
+      const userValidation = await validateBodyUser(userId);
+      if (!userValidation.ok) {
+        return res.status(userValidation.status).json({ 
+          success: false, 
+          message: userValidation.message 
+        });
+      }
+
+      // Check that user is not an admin
+      const userDoc = await User.findById(userId).select('role email');
+      if (!userDoc) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
+
+      if (userDoc.role === 'admin') {
+        logger.warn('⚠️ Admin attempted to create withdrawal for another admin', {
+          adminUsername: req.admin?.username,
+          targetUserId: userId
+        });
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Cannot create withdrawals for admin users' 
+        });
+      }
+
+      // Check if user has sufficient balance before creating withdrawal request
+      try {
+        const balanceCheck = await WithdrawService.checkSufficientBalance(userId, token_name, amount);
+        
+        if (!balanceCheck.hasSufficientFunds) {
+          logger.warn('⚠️ Insufficient balance for admin withdrawal request', {
+            adminUsername: req.admin?.username,
+            userId,
+            userEmail: balanceCheck.userEmail,
+            tokenName: token_name,
+            requestedAmount: amount,
+            requiredUsd: balanceCheck.requiredUsdValue,
+            availableBalance: balanceCheck.currentBalance,
+            deficit: balanceCheck.deficit
+          });
+
+          return res.status(400).json({
+            success: false,
+            message: 'Insufficient balance for this withdrawal',
+            data: {
+              requiredUsdValue: balanceCheck.requiredUsdValue,
+              currentBalance: balanceCheck.currentBalance,
+              deficit: balanceCheck.deficit
+            }
+          });
+        }
+      } catch (error) {
+        if (error.message === 'USER_NOT_FOUND') {
+          return res.status(404).json({
+            success: false,
+            message: 'User not found'
+          });
+        }
+        // If price fetch fails, allow creation but log warning
+        logger.warn('⚠️ Could not verify balance during admin withdrawal creation', {
+          error: error.message,
+          adminUsername: req.admin?.username,
+          userId,
+          tokenName: token_name
+        });
+      }
+
+      // Create withdrawal transaction
+      const withdrawData = {
+        token_name,
+        amount,
+        token_withdraw_address: token_withdraw_address || '',
+        user: userId,
+        status: 'pending',
+        isWithdraw: true,
+        isDeposit: false
+      };
+
+      const withdraw = await Transaction.create(withdrawData);
+
+      // If autoApprove is true, approve the withdrawal immediately
+      if (autoApprove === true) {
+        try {
+          const approvalResult = await WithdrawService.approveWithdrawal(
+            withdraw,
+            req.admin?.username
+          );
+
+          // Create audit log
+          await createAuditLog(req, res, {
+            action: 'admin_withdraw_created_approved',
+            resourceType: 'withdraw',
+            resourceId: withdraw._id.toString(),
+            resourceName: `${withdraw.token_name} withdrawal - ${withdraw.amount}`,
+            changes: {
+              before: { 
+                status: 'pending',
+                userBalance: approvalResult.previousAccountBalance
+              },
+              after: { 
+                status: 'approved',
+                usdValue: approvalResult.usdValue,
+                userBalance: approvalResult.newAccountBalance
+              }
+            },
+            description: `Admin ${req.admin?.username} created and approved ${withdraw.token_name} withdrawal of ${withdraw.amount} (USD $${approvalResult.usdValue.toFixed(2)}) for user ${userDoc.email}`
+          });
+
+          await invalidateAuditCache();
+
+          // Create notification for user
+          await createNotification({
+            action: 'withdraw_created',
+            description: `Admin created withdrawal request for ${amount} ${token_name}`,
+            metadata: {
+              userId: userId,
+              withdrawId: withdraw._id.toString(),
+              amount,
+              token_name,
+              referenceId: withdraw._id.toString(),
+              adminCreated: true
+            }
+          });
+
+          logger.info('✅ Admin created and approved withdrawal successfully', {
+            adminUsername: req.admin?.username,
+            withdrawalId: withdraw._id,
+            userId,
+            userEmail: userDoc.email,
+            usdValue: approvalResult.usdValue
+          });
+
+          return res.status(201).json({
+            success: true,
+            message: 'Withdrawal created and approved successfully',
+            data: withdraw,
+            usdValueDeducted: approvalResult.usdValue,
+            userNewBalance: approvalResult.newAccountBalance,
+            userPreviousBalance: approvalResult.previousAccountBalance
+          });
+        } catch (error) {
+          throw error;
+        }
+      } else {
+        // Create audit log for creation only
+        await createAuditLog(req, res, {
+          action: 'admin_withdraw_created',
+          resourceType: 'withdraw',
+          resourceId: withdraw._id.toString(),
+          resourceName: `${withdraw.token_name} withdrawal - ${withdraw.amount}`,
+          description: `Admin ${req.admin?.username} created ${withdraw.token_name} withdrawal of ${withdraw.amount} for user ${userDoc.email} (pending approval)`
+        });
+
+        await invalidateAuditCache();
+
+        // Create notification for user
+        await createNotification({
+          action: 'withdraw_created',
+          description: `New withdrawal request for ${amount} ${token_name}`,
+          metadata: {
+            userId: userId,
+            withdrawId: withdraw._id.toString(),
+            amount,
+            token_name,
+            referenceId: withdraw._id.toString(),
+            adminCreated: true
+          }
+        });
+
+        logger.info('✅ Admin created withdrawal successfully (pending approval)', {
+          adminUsername: req.admin?.username,
+          withdrawalId: withdraw._id,
+          userId,
+          userEmail: userDoc.email
+        });
+
+        return res.status(201).json({
+          success: true,
+          message: 'Withdrawal created successfully (pending approval)',
+          data: withdraw
+        });
+      }
+    } catch (error) {
+      logger.error('❌ Error creating withdrawal for user', {
+        error: error.message,
+        stack: error.stack,
+        adminId: req.admin?.id,
+        userId: req.body.userId
+      });
+
+      if (error.message === 'USER_NOT_FOUND') {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found for transaction' 
+        });
+      }
+      if (error.message === 'ALREADY_APPROVED') {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'This withdrawal has already been approved' 
+        });
+      }
+      if (error.message === 'INSUFFICIENT_FUNDS') {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Insufficient funds to approve this withdrawal',
+          data: error.data
+        });
+      }
+      if (error.response || error.message?.toLowerCase().includes('price')) {
+        return res.status(502).json({ 
+          success: false, 
+          message: 'Failed to fetch token price', 
+          error: error.message 
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create withdrawal',
         error: error.message
       });
     }

@@ -7,6 +7,9 @@ const depositRouter = express.Router();
 // GET /api/deposits - Get all deposits (admin only)
 depositRouter.get('/', requireAdminAuth, DepositController.getAllDeposits);
 
+// POST /api/deposits/admin - Admin create deposit for user
+depositRouter.post('/admin', requireAdminAuth, DepositController.createDepositForUser);
+
 // POST /api/deposits - Create new deposit
 depositRouter.post('/', DepositController.createDeposit);
 

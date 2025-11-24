@@ -1,4 +1,5 @@
 import Transaction from '../model/transaction.model.js';
+import User from '../model/user.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
 import DepositService from '../services/deposit.service.js';
 import { createNotification } from '../utils/notificationHelper.js';
@@ -418,6 +419,199 @@ class DepositController {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch deposits by status',
+        error: error.message
+      });
+    }
+  }
+
+  // Admin: Create deposit on behalf of a user
+  static async createDepositForUser(req, res) {
+    try {
+      const { userId, token_name, amount, token_deposit_address, autoApprove } = req.body;
+
+      logger.info('💰 Admin creating deposit for user', {
+        adminUsername: req.admin?.username,
+        adminId: req.admin?.id,
+        userId,
+        token_name,
+        amount
+      });
+
+      // Validate required fields
+      if (!userId || !token_name || !amount) {
+        return res.status(400).json({
+          success: false,
+          message: 'Required fields: userId, token_name, amount'
+        });
+      }
+
+      // Validate user exists and is not an admin
+      const userValidation = await validateBodyUser(userId);
+      if (!userValidation.ok) {
+        return res.status(userValidation.status).json({ 
+          success: false, 
+          message: userValidation.message 
+        });
+      }
+
+      // Check that user is not an admin
+      const userDoc = await User.findById(userId).select('role email');
+      if (!userDoc) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
+
+      if (userDoc.role === 'admin') {
+        logger.warn('⚠️ Admin attempted to create deposit for another admin', {
+          adminUsername: req.admin?.username,
+          targetUserId: userId
+        });
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Cannot create deposits for admin users' 
+        });
+      }
+
+      // Create deposit transaction
+      const deposit = new Transaction({
+        token_name,
+        isWithdraw: false,
+        isDeposit: true,
+        amount,
+        token_deposit_address: token_deposit_address || '',
+        user: userId,
+        status: 'pending'
+      });
+
+      const savedDeposit = await deposit.save();
+
+      // If autoApprove is true, approve the deposit immediately
+      if (autoApprove === true) {
+        try {
+          const approvalResult = await DepositService.approveDeposit(
+            savedDeposit,
+            req.admin?.username
+          );
+
+          // Create audit log
+          await createAuditLog(req, res, {
+            action: 'admin_deposit_created_approved',
+            resourceType: 'deposit',
+            resourceId: savedDeposit._id.toString(),
+            resourceName: `${savedDeposit.token_name} deposit - ${savedDeposit.amount}`,
+            changes: {
+              before: { status: 'pending' },
+              after: { 
+                status: 'approved',
+                usdValue: approvalResult.usdValue,
+                userBalance: approvalResult.newAccountBalance
+              }
+            },
+            description: `Admin ${req.admin?.username} created and approved ${savedDeposit.token_name} deposit of ${savedDeposit.amount} (USD $${approvalResult.usdValue.toFixed(2)}) for user ${userDoc.email}`
+          });
+
+          await invalidateAuditCache();
+
+          // Create notification for user
+          await createNotification({
+            action: 'deposit',
+            userId: userId,
+            metadata: {
+              amount,
+              currency: token_name,
+              referenceId: savedDeposit._id.toString(),
+              adminCreated: true
+            }
+          });
+
+          logger.info('✅ Admin created and approved deposit successfully', {
+            adminUsername: req.admin?.username,
+            depositId: savedDeposit._id,
+            userId,
+            userEmail: userDoc.email,
+            usdValue: approvalResult.usdValue
+          });
+
+          return res.status(201).json({
+            success: true,
+            message: 'Deposit created and approved successfully',
+            data: savedDeposit,
+            usdValueAdded: approvalResult.usdValue,
+            userNewBalance: approvalResult.newAccountBalance
+          });
+        } catch (error) {
+          throw error;
+        }
+      } else {
+        // Create audit log for creation only
+        await createAuditLog(req, res, {
+          action: 'admin_deposit_created',
+          resourceType: 'deposit',
+          resourceId: savedDeposit._id.toString(),
+          resourceName: `${savedDeposit.token_name} deposit - ${savedDeposit.amount}`,
+          description: `Admin ${req.admin?.username} created ${savedDeposit.token_name} deposit of ${savedDeposit.amount} for user ${userDoc.email} (pending approval)`
+        });
+
+        await invalidateAuditCache();
+
+        // Create notification for user
+        await createNotification({
+          action: 'deposit',
+          userId: userId,
+          metadata: {
+            amount,
+            currency: token_name,
+            referenceId: savedDeposit._id.toString(),
+            adminCreated: true
+          }
+        });
+
+        logger.info('✅ Admin created deposit successfully (pending approval)', {
+          adminUsername: req.admin?.username,
+          depositId: savedDeposit._id,
+          userId,
+          userEmail: userDoc.email
+        });
+
+        return res.status(201).json({
+          success: true,
+          message: 'Deposit created successfully (pending approval)',
+          data: savedDeposit
+        });
+      }
+    } catch (error) {
+      logger.error('❌ Error creating deposit for user', {
+        error: error.message,
+        stack: error.stack,
+        adminId: req.admin?.id,
+        userId: req.body.userId
+      });
+
+      if (error.message === 'USER_NOT_FOUND') {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found for transaction' 
+        });
+      }
+      if (error.message === 'ALREADY_APPROVED') {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'This deposit has already been approved' 
+        });
+      }
+      if (error.response || error.message?.toLowerCase().includes('price')) {
+        return res.status(502).json({ 
+          success: false, 
+          message: 'Failed to fetch token price', 
+          error: error.message 
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create deposit',
         error: error.message
       });
     }

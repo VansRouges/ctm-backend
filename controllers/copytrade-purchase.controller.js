@@ -1,4 +1,5 @@
 import CopytradePurchase from '../model/copytrade-purchase.model.js';
+import User from '../model/user.model.js';
 import { validateUserExists, validateBodyUser } from '../utils/userValidation.js';
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
@@ -584,6 +585,263 @@ class CopytradePurchaseController {
       });
       console.error('Error deleting copytrade purchase:', error);
       res.status(500).json({ success: false, message: 'Failed to delete copytrade purchase', error: error.message });
+    }
+  }
+
+  // Admin: Create copytrade purchase on behalf of a user
+  static async createCopytradePurchaseForUser(req, res) {
+    try {
+      const {
+        userId,
+        copytradeOptionId,
+        initial_investment,
+        autoApprove
+      } = req.body;
+
+      logger.info('📝 Admin creating copytrade purchase for user', {
+        adminUsername: req.admin?.username,
+        adminId: req.admin?.id,
+        userId,
+        copytradeOptionId,
+        initial_investment
+      });
+
+      // Validate required fields
+      if (!userId || !copytradeOptionId || !initial_investment) {
+        return res.status(400).json({
+          success: false,
+          message: 'Required fields: userId, copytradeOptionId, initial_investment'
+        });
+      }
+
+      // Validate user exists and is not an admin
+      const userValidation = await validateBodyUser(userId);
+      if (!userValidation.ok) {
+        return res.status(userValidation.status).json({ 
+          success: false, 
+          message: userValidation.message 
+        });
+      }
+
+      // Check that user is not an admin
+      const userDoc = await User.findById(userId).select('role email');
+      if (!userDoc) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
+
+      if (userDoc.role === 'admin') {
+        logger.warn('⚠️ Admin attempted to create copytrade purchase for another admin', {
+          adminUsername: req.admin?.username,
+          targetUserId: userId
+        });
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Cannot create copytrade purchases for admin users' 
+        });
+      }
+
+      // Use MongoDB transaction for atomicity
+      const session = await mongoose.startSession();
+      session.startTransaction();
+
+      try {
+        // Create purchase (status: pending, no balance deduction)
+        const result = await CopytradePurchaseService.createPurchase({
+          user: userId,
+          copytradeOptionId,
+          initial_investment
+        }, session);
+
+        const saved = result.purchase;
+
+        // If autoApprove is true, approve the purchase immediately
+        if (autoApprove === true) {
+          const approvalResult = await CopytradePurchaseService.approvePurchase(
+            saved,
+            req.admin?.username,
+            session
+          );
+
+          await session.commitTransaction();
+
+          // Create audit log
+          await createAuditLog(req, res, {
+            action: 'admin_copytrade_purchase_created_approved',
+            resourceType: 'copytrade_purchase',
+            resourceId: saved._id.toString(),
+            resourceName: saved.trade_title,
+            changes: {
+              before: { status: 'pending' },
+              after: { 
+                status: 'active',
+                initialInvestment: saved.initial_investment,
+                userBalance: approvalResult.newAccountBalance
+              }
+            },
+            description: `Admin ${req.admin?.username} created and approved copytrade purchase: ${saved.trade_title} - $${saved.initial_investment} for user ${userDoc.email}`
+          });
+
+          await invalidateAuditCache();
+
+          // Create notification for user
+          await createNotification({
+            action: 'copytrade_purchase',
+            userId: userId,
+            metadata: {
+              amount: initial_investment,
+              planName: saved.trade_title,
+              referenceId: saved._id.toString(),
+              adminCreated: true
+            }
+          });
+
+          logger.info('✅ Admin created and approved copytrade purchase successfully', {
+            adminUsername: req.admin?.username,
+            purchaseId: saved._id,
+            userId,
+            userEmail: userDoc.email,
+            trade_title: saved.trade_title,
+            initial_investment: saved.initial_investment
+          });
+
+          return res.status(201).json({
+            success: true,
+            message: 'Copytrade purchase created and approved successfully',
+            data: {
+              purchase: saved,
+              deductions: approvalResult.deductions,
+              newAccountBalance: approvalResult.newAccountBalance
+            }
+          });
+        } else {
+          await session.commitTransaction();
+
+          // Create audit log for creation only
+          await createAuditLog(req, res, {
+            action: 'admin_copytrade_purchase_created',
+            resourceType: 'copytrade_purchase',
+            resourceId: saved._id.toString(),
+            resourceName: saved.trade_title,
+            description: `Admin ${req.admin?.username} created copytrade purchase: ${saved.trade_title} - $${saved.initial_investment} for user ${userDoc.email} (pending approval)`
+          });
+
+          await invalidateAuditCache();
+
+          // Create notification for user
+          await createNotification({
+            action: 'copytrade_purchase',
+            userId: userId,
+            metadata: {
+              amount: initial_investment,
+              planName: saved.trade_title,
+              referenceId: saved._id.toString(),
+              adminCreated: true
+            }
+          });
+
+          logger.info('✅ Admin created copytrade purchase successfully (pending approval)', {
+            adminUsername: req.admin?.username,
+            purchaseId: saved._id,
+            userId,
+            userEmail: userDoc.email,
+            trade_title: saved.trade_title,
+            initial_investment: saved.initial_investment
+          });
+
+          return res.status(201).json({
+            success: true,
+            message: 'Copytrade purchase created successfully (pending approval)',
+            data: {
+              purchase: saved,
+              note: 'Balance will be deducted when admin approves (status changes to active)'
+            }
+          });
+        }
+      } catch (error) {
+        await session.abortTransaction();
+        throw error;
+      } finally {
+        session.endSession();
+      }
+    } catch (error) {
+      logger.error('❌ Error creating copytrade purchase for user', {
+        error: error.message,
+        stack: error.stack,
+        adminId: req.admin?.id,
+        userId: req.body.userId
+      });
+
+      // Handle specific error types
+      if (error.message === 'INSUFFICIENT_BALANCE_FOR_PURCHASE') {
+        return res.status(400).json({
+          success: false,
+          message: `User does not have sufficient balance. Minimum required: $${error.data.required}, Available: $${error.data.available}`,
+          error: error.message,
+          data: error.data
+        });
+      }
+
+      if (error.message === 'INSUFFICIENT_FUNDS') {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient funds. Required: $${error.data.required}, Available: $${error.data.available}`,
+          error: error.message,
+          data: error.data
+        });
+      }
+
+      if (error.message === 'INVESTMENT_BELOW_MINIMUM') {
+        return res.status(400).json({
+          success: false,
+          message: `Investment amount is below the minimum required. Minimum: $${error.data.minimum}, Provided: $${error.data.investment}`,
+          error: error.message,
+          data: error.data
+        });
+      }
+
+      if (error.message === 'COPYTRADE_OPTION_NOT_FOUND') {
+        return res.status(404).json({
+          success: false,
+          message: 'Copytrade option not found',
+          error: error.message,
+          data: error.data
+        });
+      }
+
+      if (error.message === 'USER_NOT_FOUND') {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found',
+          error: error.message
+        });
+      }
+
+      if (error.message === 'NO_PORTFOLIO_ENTRIES') {
+        return res.status(400).json({
+          success: false,
+          message: 'User has no portfolio entries to deduct from',
+          error: error.message,
+          data: error.data
+        });
+      }
+
+      if (error.message === 'INSUFFICIENT_PORTFOLIO_VALUE') {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient portfolio value. Required: $${error.data.required}, Available: $${error.data.available}`,
+          error: error.message,
+          data: error.data
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create copytrade purchase',
+        error: error.message
+      });
     }
   }
 }

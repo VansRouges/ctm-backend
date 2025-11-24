@@ -7,6 +7,9 @@ const withdrawRouter = express.Router();
 // GET /api/withdraws - Get all withdraws (admin only)
 withdrawRouter.get('/', requireAdminAuth, WithdrawController.getAllWithdraws);
 
+// POST /api/withdraws/admin - Admin create withdrawal for user
+withdrawRouter.post('/admin', requireAdminAuth, WithdrawController.createWithdrawForUser);
+
 // POST /api/withdraws - Create new withdraw
 withdrawRouter.post('/', WithdrawController.createWithdraw);
 
