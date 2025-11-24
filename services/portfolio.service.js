@@ -374,6 +374,67 @@ class PortfolioService {
       throw error;
     }
   }
+
+  /**
+   * Get all users with their portfolio information (Admin only)
+   * @returns {Array} - Array of users with portfolio data
+   */
+  static async getAllUsersWithPortfolios() {
+    try {
+      // Get all users (excluding password field)
+      const users = await User.find({ role: 'user' })
+        .select('-password')
+        .sort({ createdAt: -1 });
+
+      // Get portfolio data for each user
+      const usersWithPortfolios = await Promise.all(
+        users.map(async (user) => {
+          const portfolio = await this.getUserPortfolio(user._id.toString());
+          
+          return {
+            user: {
+              _id: user._id,
+              email: user.email,
+              username: user.username,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              fullName: user.fullName,
+              profilePicture: user.profilePicture,
+              authProvider: user.authProvider,
+              isEmailVerified: user.isEmailVerified,
+              isActive: user.isActive,
+              lastLogin: user.lastLogin,
+              roi: user.roi,
+              kycStatus: user.kycStatus,
+              accountStatus: user.accountStatus,
+              totalInvestment: user.totalInvestment,
+              accountBalance: user.accountBalance,
+              createdAt: user.createdAt,
+              updatedAt: user.updatedAt
+            },
+            portfolio: {
+              holdings: portfolio.holdings,
+              totalCurrentValue: portfolio.totalCurrentValue,
+              totalInvestedValue: portfolio.totalInvestedValue,
+              totalProfitLoss: portfolio.totalProfitLoss,
+              totalProfitLossPercentage: portfolio.totalProfitLossPercentage
+            }
+          };
+        })
+      );
+
+      logger.info('📊 Fetched all users with portfolios', {
+        totalUsers: usersWithPortfolios.length
+      });
+
+      return usersWithPortfolios;
+    } catch (error) {
+      logger.error('❌ Error getting all users with portfolios', {
+        error: error.message
+      });
+      throw error;
+    }
+  }
 }
 
 export default PortfolioService;

@@ -17,6 +17,9 @@ portfolioRouter.get('/my-available-tokens', requireUserAuth, PortfolioController
 portfolioRouter.post('/validate-withdrawal', requireUserAuth, PortfolioController.validateWithdrawal);
 
 // Admin endpoints
+// GET /api/v1/portfolio/users - Admin: Get all users with their portfolio information
+portfolioRouter.get('/users', requireAdminAuth, PortfolioController.getAllUsersWithPortfolios);
+
 // GET /api/v1/portfolio/user/:userId - Admin: Get user's portfolio
 portfolioRouter.get('/user/:userId', requireAdminAuth, PortfolioController.getUserPortfolio);
 

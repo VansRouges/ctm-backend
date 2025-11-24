@@ -209,6 +209,35 @@ class PortfolioController {
       });
     }
   }
+
+  /**
+   * Get all users with their portfolio information (Admin endpoint)
+   * GET /api/v1/portfolio/users
+   */
+  static async getAllUsersWithPortfolios(req, res) {
+    try {
+      logger.info('📊 Admin fetching all users with portfolios', { adminId: req.admin?.id });
+
+      const usersWithPortfolios = await PortfolioService.getAllUsersWithPortfolios();
+
+      res.json({
+        success: true,
+        count: usersWithPortfolios.length,
+        data: usersWithPortfolios
+      });
+    } catch (error) {
+      logger.error('❌ Error fetching all users with portfolios', {
+        error: error.message,
+        adminId: req.admin?.id
+      });
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch users with portfolios',
+        error: error.message
+      });
+    }
+  }
 }
 
 export default PortfolioController;
