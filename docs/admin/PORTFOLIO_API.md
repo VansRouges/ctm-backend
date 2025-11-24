@@ -26,7 +26,93 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
 
 ## Endpoints
 
-### 1. Get User Portfolio
+### 1. Get All Users with Portfolio Information
+
+**Endpoint:** `GET /api/v1/portfolio/users`
+
+**Description:** Retrieves all users (role: 'user') with their complete portfolio information, including user profile data and portfolio holdings with live prices. Useful for admin dashboards and user management overviews.
+
+**Authentication:** Required (Admin JWT Token)
+
+**Query Parameters:** None
+
+---
+
+#### Success Response (200 OK)
+
+```json
+{
+  "success": true,
+  "count": 15,
+  "data": [
+    {
+      "user": {
+        "_id": "68f02408d173966c99f2db7f",
+        "email": "user@example.com",
+        "username": "johndoe",
+        "firstName": "John",
+        "lastName": "Doe",
+        "fullName": "John Doe",
+        "profilePicture": "https://example.com/profile.jpg",
+        "authProvider": "google",
+        "isEmailVerified": true,
+        "isActive": true,
+        "lastLogin": "2025-11-24T10:00:00.000Z",
+        "roi": 25,
+        "kycStatus": false,
+        "accountStatus": true,
+        "totalInvestment": 10000,
+        "accountBalance": 12500,
+        "createdAt": "2025-10-01T00:00:00.000Z",
+        "updatedAt": "2025-11-24T10:00:00.000Z"
+      },
+      "portfolio": {
+        "holdings": [
+          {
+            "tokenName": "BTC",
+            "amount": 0.5,
+            "averageAcquisitionPrice": 40000,
+            "currentPrice": 45000,
+            "totalInvestedUsd": 20000,
+            "currentValue": 22500,
+            "profitLoss": 2500,
+            "profitLossPercentage": 12.5,
+            "lastUpdated": "2025-11-24T10:00:00.000Z"
+          },
+          {
+            "tokenName": "USDT",
+            "amount": 5000,
+            "averageAcquisitionPrice": 1.0,
+            "currentPrice": 0.9989,
+            "totalInvestedUsd": 5000,
+            "currentValue": 4994.5,
+            "profitLoss": -5.5,
+            "profitLossPercentage": -0.11,
+            "lastUpdated": "2025-11-24T10:00:00.000Z"
+          }
+        ],
+        "totalCurrentValue": 27494.5,
+        "totalInvestedValue": 25000,
+        "totalProfitLoss": 2494.5,
+        "totalProfitLossPercentage": 9.98
+      }
+    }
+  ]
+}
+```
+
+**Response Fields:**
+
+- `count`: Total number of users returned
+- `data`: Array of user objects, each containing:
+  - `user`: Complete user profile information (excluding password)
+  - `portfolio`: Portfolio data with holdings and totals
+
+**Note:** Users are sorted by creation date (newest first). Only users with `role: 'user'` are returned (admins are excluded).
+
+---
+
+### 2. Get User Portfolio
 
 **Endpoint:** `GET /api/v1/portfolio/user/:userId`
 
@@ -83,7 +169,7 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
 
 ---
 
-### 2. Get User's Available Tokens
+### 3. Get User's Available Tokens
 
 **Endpoint:** `GET /api/v1/portfolio/user/:userId/available-tokens`
 
@@ -121,7 +207,7 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
 
 ---
 
-### 3. Recalculate User's Account Balance
+### 4. Recalculate User's Account Balance
 
 **Endpoint:** `POST /api/v1/portfolio/user/:userId/recalculate`
 
@@ -170,6 +256,37 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
 ---
 
 ## Frontend Integration Examples
+
+### Get All Users with Portfolios
+
+```typescript
+// Get all users with their portfolio information
+const getAllUsersWithPortfolios = async () => {
+  const token = localStorage.getItem('adminToken');
+  
+  const response = await fetch('/api/v1/portfolio/users', {
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+
+  const result = await response.json();
+  
+  if (result.success) {
+    console.log(`Found ${result.count} users`);
+    return result.data; // Array of users with portfolios
+  }
+  throw new Error(result.message);
+};
+
+// Usage example
+const users = await getAllUsersWithPortfolios();
+users.forEach(({ user, portfolio }) => {
+  console.log(`${user.email}: ${portfolio.totalCurrentValue} USD`);
+});
+```
+
+---
 
 ### View User Portfolio
 
@@ -268,6 +385,13 @@ const recalculateBalance = async (userId: string) => {
 
 ## Admin Workflow
 
+### Viewing All Users with Portfolios
+
+1. Admin navigates to user management dashboard
+2. Admin calls `GET /api/v1/portfolio/users`
+3. Admin views list of all users with their portfolio summaries
+4. Admin can see total users, balances, and portfolio performance at a glance
+
 ### Viewing User Portfolio
 
 1. Admin navigates to user management
@@ -302,12 +426,15 @@ const recalculateBalance = async (userId: string) => {
 
 ### Endpoints Summary
 
-1. **GET `/user/:userId`** - Get user's complete portfolio
-2. **GET `/user/:userId/available-tokens`** - Get user's available tokens
-3. **POST `/user/:userId/recalculate`** - Recalculate user's account balance
+1. **GET `/users`** - Get all users with their portfolio information
+2. **GET `/user/:userId`** - Get user's complete portfolio
+3. **GET `/user/:userId/available-tokens`** - Get user's available tokens
+4. **POST `/user/:userId/recalculate`** - Recalculate user's account balance
 
 ### Use Cases
 
+- **Dashboard Overview**: Get all users with portfolios for admin dashboard
+- **User Management**: View all users and their portfolio status at once
 - **User Support**: View user's portfolio to help with inquiries
 - **Balance Verification**: Recalculate balance to verify accuracy
 - **Withdrawal Processing**: Check available tokens before processing withdrawals
