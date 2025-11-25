@@ -5,6 +5,7 @@ import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
 import CopytradePurchaseService from '../services/copytrade-purchase.service.js';
+import CopytradeTradingService from '../services/copytrade-trading.service.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 
@@ -198,13 +199,42 @@ class CopytradePurchaseController {
         adminUsername: req.admin?.username
       });
 
-      const items = await CopytradePurchase.find().sort({ createdAt: -1 });
+      const items = await CopytradePurchase.find()
+        .populate('user', 'username email firstName lastName')
+        .sort({ createdAt: -1 });
+
+      // Transform data to include user details in a more readable format
+      const itemsWithUserDetails = items.map(item => {
+        const itemObj = item.toObject();
+        if (itemObj.user && typeof itemObj.user === 'object') {
+          // User is populated, extract details
+          itemObj.userDetails = {
+            _id: itemObj.user._id,
+            username: itemObj.user.username || null,
+            email: itemObj.user.email || null,
+            firstName: itemObj.user.firstName || null,
+            lastName: itemObj.user.lastName || null
+          };
+          // Keep user ID for backward compatibility
+          itemObj.user = itemObj.user._id;
+        } else {
+          // User is not populated (shouldn't happen, but handle gracefully)
+          itemObj.userDetails = {
+            _id: itemObj.user,
+            username: null,
+            email: null,
+            firstName: null,
+            lastName: null
+          };
+        }
+        return itemObj;
+      });
 
       // Create audit log
       await createAuditLog(req, res, {
         action: 'copytrade_purchase_view_all',
         resourceType: 'copytrade_purchase',
-        description: `Admin ${req.admin?.username || 'unknown'} viewed all copytrade purchases (${items.length} purchases)`
+        description: `Admin ${req.admin?.username || 'unknown'} viewed all copytrade purchases (${itemsWithUserDetails.length} purchases)`
       });
 
       // Invalidate audit cache
@@ -212,10 +242,10 @@ class CopytradePurchaseController {
 
       logger.info('✅ Copytrade purchases retrieved successfully', {
         adminUsername: req.admin?.username,
-        count: items.length
+        count: itemsWithUserDetails.length
       });
 
-      res.json({ success: true, data: items, count: items.length });
+      res.json({ success: true, data: itemsWithUserDetails, count: itemsWithUserDetails.length });
     } catch (error) {
       logger.error('❌ Error fetching copytrade purchases', {
         error: error.message,
@@ -840,6 +870,157 @@ class CopytradePurchaseController {
       res.status(500).json({
         success: false,
         message: 'Failed to create copytrade purchase',
+        error: error.message
+      });
+    }
+  }
+
+  // Admin: End/Stop a copytrade purchase
+  static async endCopytradePurchase(req, res) {
+    try {
+      const { id } = req.params;
+
+      logger.info('🛑 Admin ending copytrade purchase', {
+        adminUsername: req.admin?.username,
+        adminId: req.admin?.id,
+        purchaseId: id
+      });
+
+      // Find the purchase
+      const purchase = await CopytradePurchase.findById(id);
+      
+      if (!purchase) {
+        logger.warn('⚠️ Copytrade purchase not found for ending', {
+          purchaseId: id,
+          adminUsername: req.admin?.username
+        });
+        return res.status(404).json({
+          success: false,
+          message: 'Copytrade purchase not found'
+        });
+      }
+
+      // Validate purchase is active
+      if (purchase.trade_status !== 'active') {
+        logger.warn('⚠️ Attempted to end non-active copytrade purchase', {
+          purchaseId: id,
+          currentStatus: purchase.trade_status,
+          adminUsername: req.admin?.username
+        });
+        return res.status(400).json({
+          success: false,
+          message: `Cannot end copytrade purchase. Current status: ${purchase.trade_status}. Only active trades can be ended.`
+        });
+      }
+
+      // Get user details for logging
+      const userDoc = await User.findById(purchase.user).select('email username');
+      const userEmail = userDoc?.email || 'unknown';
+
+      // Complete the trade (calculates final ROI, updates end date, adds to balance)
+      const completionResult = await CopytradeTradingService.completeSingleTrade(id);
+
+      // Create audit log
+      await createAuditLog(req, res, {
+        action: 'admin_copytrade_purchase_ended',
+        resourceType: 'copytrade_purchase',
+        resourceId: purchase._id.toString(),
+        resourceName: purchase.trade_title,
+        changes: {
+          before: {
+            status: 'active',
+            trade_end_date: purchase.trade_end_date?.toISOString() || null,
+            trade_current_value: purchase.trade_current_value
+          },
+          after: {
+            status: 'completed',
+            trade_end_date: completionResult.purchase.trade_end_date.toISOString(),
+            trade_current_value: completionResult.finalValue,
+            roiPercent: completionResult.roiPercent,
+            profitLoss: completionResult.profitLoss,
+            newAccountBalance: completionResult.newAccountBalance
+          }
+        },
+        description: `Admin ${req.admin?.username} ended copytrade purchase: ${purchase.trade_title} - Final value: $${completionResult.finalValue} (ROI: ${completionResult.roiPercent}%) for user ${userEmail}`
+      });
+
+      await invalidateAuditCache();
+
+      // Create notification for user
+      await createNotification({
+        action: 'copytrade_completed',
+        userId: purchase.user,
+        metadata: {
+          purchaseId: purchase._id.toString(),
+          planName: purchase.trade_title,
+          initialInvestment: purchase.initial_investment,
+          finalValue: completionResult.finalValue,
+          profitLoss: completionResult.profitLoss,
+          roiPercent: completionResult.roiPercent,
+          adminEnded: true
+        }
+      });
+
+      logger.info('✅ Admin ended copytrade purchase successfully', {
+        adminUsername: req.admin?.username,
+        purchaseId: id,
+        userId: purchase.user,
+        userEmail,
+        trade_title: purchase.trade_title,
+        initialInvestment: purchase.initial_investment,
+        finalValue: completionResult.finalValue,
+        roiPercent: completionResult.roiPercent
+      });
+
+      res.json({
+        success: true,
+        message: 'Copytrade purchase ended successfully',
+        data: {
+          purchase: completionResult.purchase,
+          finalValue: completionResult.finalValue,
+          roiPercent: completionResult.roiPercent,
+          profitLoss: completionResult.profitLoss,
+          newAccountBalance: completionResult.newAccountBalance,
+          tradeEndDate: completionResult.purchase.trade_end_date
+        }
+      });
+    } catch (error) {
+      logger.error('❌ Error ending copytrade purchase', {
+        error: error.message,
+        stack: error.stack,
+        purchaseId: req.params.id,
+        adminId: req.admin?.id
+      });
+
+      if (error.message === 'PURCHASE_NOT_FOUND') {
+        return res.status(404).json({
+          success: false,
+          message: 'Copytrade purchase not found',
+          error: error.message,
+          data: error.data
+        });
+      }
+
+      if (error.message === 'PURCHASE_NOT_ACTIVE') {
+        return res.status(400).json({
+          success: false,
+          message: `Cannot end copytrade purchase. Current status: ${error.data.currentStatus}. Only active trades can be ended.`,
+          error: error.message,
+          data: error.data
+        });
+      }
+
+      if (error.message === 'USER_NOT_FOUND') {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found for this purchase',
+          error: error.message
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to end copytrade purchase',
         error: error.message
       });
     }

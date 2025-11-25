@@ -253,6 +253,119 @@ class CopytradeTradingService {
   }
 
   /**
+   * Manually complete a single copytrade purchase (admin action)
+   * Calculates final ROI based on risk level and adds to user balance
+   * Updates trade_end_date to current date/time
+   * @param {String} purchaseId - CopytradePurchase ID
+   * @param {Object} session - MongoDB session for transaction (optional)
+   * @returns {Object} - Completion result
+   */
+  static async completeSingleTrade(purchaseId, session = null) {
+    const shouldCreateSession = !session;
+    if (shouldCreateSession) {
+      session = await mongoose.startSession();
+      session.startTransaction();
+    }
+
+    try {
+      // Find the purchase
+      const purchase = await CopytradePurchase.findById(purchaseId).session(session);
+      
+      if (!purchase) {
+        const error = new Error('PURCHASE_NOT_FOUND');
+        error.data = { purchaseId };
+        throw error;
+      }
+
+      // Validate purchase is active
+      if (purchase.trade_status !== 'active') {
+        const error = new Error('PURCHASE_NOT_ACTIVE');
+        error.data = { 
+          purchaseId, 
+          currentStatus: purchase.trade_status 
+        };
+        throw error;
+      }
+
+      const userId = purchase.user;
+      const { trade_risk, trade_roi_min, trade_roi_max, initial_investment } = purchase;
+
+      // Calculate final ROI based on risk level
+      let finalROIPercent;
+      switch (trade_risk) {
+        case 'low':
+          finalROIPercent = trade_roi_min;
+          break;
+        case 'medium':
+          finalROIPercent = trade_roi_max;
+          break;
+        case 'high':
+          finalROIPercent = trade_roi_min;
+          break;
+        default:
+          finalROIPercent = trade_roi_min;
+      }
+
+      // Calculate final value: initial_investment + (initial_investment * ROI%)
+      const finalValue = Number((initial_investment * (1 + finalROIPercent / 100)).toFixed(8));
+
+      // Update purchase with final value, status, and end date
+      const now = new Date();
+      purchase.trade_current_value = finalValue;
+      purchase.trade_status = 'completed';
+      purchase.trade_profit_loss = Number((finalValue - initial_investment).toFixed(8));
+      purchase.isProfit = purchase.trade_profit_loss >= 0;
+      purchase.trade_end_date = now; // Update end date to current time
+      await purchase.save({ session });
+
+      // Add final value to user's accountBalance and portfolio as USDT
+      const usdtAmount = finalValue; // Assuming USDT ≈ $1
+      await BalanceService.addFunds(userId, finalValue, 'USDT', usdtAmount, session);
+
+      // Recalculate accountBalance from portfolio (to sync with portfolio value)
+      const newAccountBalance = await PortfolioService.recalculateAccountBalance(userId, session);
+
+      if (shouldCreateSession) {
+        await session.commitTransaction();
+      }
+
+      logger.info('✅ Manually completed copytrade purchase', {
+        purchaseId: purchase._id,
+        userId,
+        initialInvestment: initial_investment,
+        finalValue,
+        roiPercent: finalROIPercent,
+        profitLoss: purchase.trade_profit_loss,
+        risk: trade_risk,
+        newEndDate: now.toISOString(),
+        newAccountBalance
+      });
+
+      return {
+        purchase,
+        finalValue,
+        roiPercent: finalROIPercent,
+        profitLoss: purchase.trade_profit_loss,
+        newAccountBalance
+      };
+    } catch (error) {
+      if (shouldCreateSession) {
+        await session.abortTransaction();
+      }
+      logger.error('❌ Error manually completing copytrade purchase', {
+        purchaseId,
+        error: error.message,
+        stack: error.stack
+      });
+      throw error;
+    } finally {
+      if (shouldCreateSession) {
+        session.endSession();
+      }
+    }
+  }
+
+  /**
    * Process all active trades (update + complete)
    * Called by cron job every hour
    * @returns {Object} - Processing statistics

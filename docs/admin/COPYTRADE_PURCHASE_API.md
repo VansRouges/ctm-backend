@@ -51,9 +51,13 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
   "data": [
     {
       "_id": "60f1b2c3d4e5f6a7b8c9d0e1f",
-      "user": {
+      "user": "6897a73e63d62b4a2878ab4c",
+      "userDetails": {
         "_id": "6897a73e63d62b4a2878ab4c",
-        "email": "user@example.com"
+        "username": "john_doe",
+        "email": "user@example.com",
+        "firstName": "John",
+        "lastName": "Doe"
       },
       "trade_title": "Alpha Growth Strategy",
       "initial_investment": 5000,
@@ -63,6 +67,8 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
       "trade_roi_min": 8,
       "trade_roi_max": 22,
       "trade_duration": 45,
+      "trade_start_date": "2025-10-24T18:00:00.000Z",
+      "trade_end_date": "2025-12-08T18:00:00.000Z",
       "createdAt": "2025-10-24T18:00:00.000Z",
       "updatedAt": "2025-10-24T18:05:00.000Z"
     }
@@ -70,6 +76,8 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
   "count": 1
 }
 ```
+
+**Note:** The response now includes a `userDetails` object with user information (username, email, firstName, lastName) in addition to the `user` ID field for backward compatibility.
 
 ---
 
@@ -273,7 +281,93 @@ When admin changes status from `pending` to `active`, the backend automatically:
 
 ---
 
-### 5. Delete Copytrade Purchase
+### 5. End/Stop Copytrade Purchase
+
+**Endpoint:** `POST /api/v1/copytrade-purchases/:id/end`
+
+**Description:** Allows admins to manually end/stop an active copytrade purchase. This will:
+- Calculate the final ROI based on the trade's risk level
+- Update `trade_end_date` to the current date/time
+- Update `trade_current_value` to the final calculated value
+- Add the final value to the user's account balance
+- Update `trade_status` to `completed`
+- Recalculate the user's account balance
+
+**Authentication:** Required (Admin JWT Token)
+
+**Important:** Only active trades can be ended. This action cannot be undone.
+
+---
+
+#### Success Response (200 OK)
+
+```json
+{
+  "success": true,
+  "message": "Copytrade purchase ended successfully",
+  "data": {
+    "purchase": {
+      "_id": "60f1b2c3d4e5f6a7b8c9d0e1f",
+      "user": "6897a73e63d62b4a2878ab4c",
+      "trade_title": "Alpha Growth Strategy",
+      "initial_investment": 5000,
+      "trade_current_value": 5500,
+      "trade_profit_loss": 500,
+      "trade_status": "completed",
+      "trade_risk": "medium",
+      "trade_roi_min": 8,
+      "trade_roi_max": 22,
+      "trade_start_date": "2025-10-24T18:00:00.000Z",
+      "trade_end_date": "2025-11-25T10:30:00.000Z",
+      "createdAt": "2025-10-24T18:00:00.000Z",
+      "updatedAt": "2025-11-25T10:30:00.000Z"
+    },
+    "finalValue": 5500,
+    "roiPercent": 22,
+    "profitLoss": 500,
+    "newAccountBalance": 15500,
+    "tradeEndDate": "2025-11-25T10:30:00.000Z"
+  }
+}
+```
+
+#### Final ROI Calculation
+
+The final ROI is calculated based on the trade's risk level:
+
+- **Low Risk**: Uses `trade_roi_min`
+- **Medium Risk**: Uses `trade_roi_max`
+- **High Risk**: Uses `trade_roi_min`
+
+Final Value = `initial_investment × (1 + ROI% / 100)`
+
+#### Error Responses
+
+**400 Bad Request - Purchase Not Active:**
+```json
+{
+  "success": false,
+  "message": "Cannot end copytrade purchase. Current status: completed. Only active trades can be ended.",
+  "error": "PURCHASE_NOT_ACTIVE",
+  "data": {
+    "purchaseId": "60f1b2c3d4e5f6a7b8c9d0e1f",
+    "currentStatus": "completed"
+  }
+}
+```
+
+**404 Not Found:**
+```json
+{
+  "success": false,
+  "message": "Copytrade purchase not found",
+  "error": "PURCHASE_NOT_FOUND"
+}
+```
+
+---
+
+### 6. Delete Copytrade Purchase
 
 **Endpoint:** `DELETE /api/v1/copytrade-purchases/:id`
 
@@ -458,6 +552,7 @@ cancelled
 
 1. **Approve Purchase**: `PUT /:id` with `{ "trade_status": "active" }`
 2. **Update Value**: `PUT /:id` with `{ "trade_current_value": ... }`
-3. **Complete Trade**: `PUT /:id` with `{ "trade_status": "completed" }`
-4. **Cancel Trade**: `PUT /:id` with `{ "trade_status": "cancelled" }`
+3. **End/Stop Trade**: `POST /:id/end` (automatically calculates final ROI and completes trade)
+4. **Complete Trade**: `PUT /:id` with `{ "trade_status": "completed" }` (manual completion)
+5. **Cancel Trade**: `PUT /:id` with `{ "trade_status": "cancelled" }`
 

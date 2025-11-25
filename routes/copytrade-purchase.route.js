@@ -7,6 +7,7 @@ const router = Router();
 
 // Admin endpoints (must come before user endpoints to avoid route conflicts)
 router.post('/admin', requireAdminAuth, CopytradePurchaseController.createCopytradePurchaseForUser);  // Admin - create purchase for user
+router.post('/:id/end', requireAdminAuth, CopytradePurchaseController.endCopytradePurchase);  // Admin - end/stop copytrade purchase
 router.get('/', requireAdminAuth, CopytradePurchaseController.getAllCopytradePurchases);  // Admin - get all purchases
 
 // User endpoints
