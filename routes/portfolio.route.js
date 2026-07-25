@@ -10,6 +10,9 @@ const portfolioRouter = express.Router();
 // GET /api/v1/portfolio/my-portfolio - Get authenticated user's portfolio
 portfolioRouter.get('/my-portfolio', requireUserAuth, PortfolioController.getMyPortfolio);
 
+// GET /api/v1/portfolio/my-financial-summary - Available + locked + current value + ROI
+portfolioRouter.get('/my-financial-summary', requireUserAuth, PortfolioController.getMyFinancialSummary);
+
 // GET /api/v1/portfolio/my-available-tokens - Get tokens authenticated user can withdraw
 portfolioRouter.get('/my-available-tokens', requireUserAuth, PortfolioController.getMyAvailableTokens);
 
@@ -23,10 +26,13 @@ portfolioRouter.get('/users', requireAdminAuth, PortfolioController.getAllUsersW
 // GET /api/v1/portfolio/user/:userId - Admin: Get user's portfolio
 portfolioRouter.get('/user/:userId', requireAdminAuth, PortfolioController.getUserPortfolio);
 
+// GET /api/v1/portfolio/user/:userId/financial-summary - Admin: equity summary
+portfolioRouter.get('/user/:userId/financial-summary', requireAdminAuth, PortfolioController.getUserFinancialSummary);
+
 // GET /api/v1/portfolio/user/:userId/available-tokens - Admin: Get tokens user can withdraw
 portfolioRouter.get('/user/:userId/available-tokens', requireAdminAuth, PortfolioController.getAvailableTokens);
 
-// POST /api/v1/portfolio/user/:userId/recalculate - Admin: Recalculate balance
+// POST /api/v1/portfolio/user/:userId/recalculate - Admin: Recalculate balance + equity metrics
 portfolioRouter.post('/user/:userId/recalculate', requireAdminAuth, PortfolioController.recalculateBalance);
 
 export default portfolioRouter;

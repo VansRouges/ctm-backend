@@ -56,6 +56,7 @@ const userSchema = new mongoose.Schema({
   roi: {
     type: Number,
     default: 0
+    // Derived: ((currentValue + lifetimeWithdrawals) - totalInvestment) / totalInvestment * 100
   },
   role: {
     type: String,
@@ -71,19 +72,30 @@ const userSchema = new mongoose.Schema({
     default: false
   },
   
-  // FINANCIAL FIELDS - UPDATED
+  // FINANCIAL FIELDS
   totalInvestment: {
     type: Number,
     default: 0,
-    min: 0,
-    // Total value of all approved deposits (historical tracking)
+    min: 0
+    // Lifetime approved deposits — never reduced by withdrawals or trades
   },
   accountBalance: {
     type: Number,
     default: 0,
-    min: 0,
-    // Current available balance for withdrawals
-    // Will be initialized from totalInvestment for existing users
+    min: 0
+    // Available / liquid portfolio mark-to-market (excludes capital locked in trades)
+  },
+  currentValue: {
+    type: Number,
+    default: 0,
+    min: 0
+    // Total equity = accountBalance (available) + locked capital in active trades/stocks
+  },
+  lifetimeWithdrawals: {
+    type: Number,
+    default: 0,
+    min: 0
+    // Sum of approved withdrawal USD (cached; recomputed on sync)
   }
 }, {
   timestamps: true

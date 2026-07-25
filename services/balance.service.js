@@ -1,21 +1,16 @@
 // services/balance.service.js
 // Centralized balance management service
-import mongoose from 'mongoose';
 import User from '../model/user.model.js';
 import PortfolioService from './portfolio.service.js';
+import FinancialSummaryService from './financial-summary.service.js';
 import logger from '../utils/logger.js';
 
 class BalanceService {
- /**
+  /**
    * Add funds to user account (for deposits)
-   * Updates totalInvestment, accountBalance, AND portfolio
-   * @param {String} userId - User ID
-   * @param {Number} usdValue - Amount to add in USD
-   * @param {String} tokenName - Token being deposited
-   * @param {Number} tokenAmount - Amount of tokens
-   * @param {Object} session - MongoDB session for transaction
+   * Updates totalInvestment AND portfolio, then syncs metrics
    */
- static async addFunds(userId, usdValue, tokenName, tokenAmount, session = null) {
+  static async addFunds(userId, usdValue, tokenName, tokenAmount, session = null) {
     const userDoc = await User.findById(userId)
       .select('email totalInvestment accountBalance')
       .session(session);
@@ -24,7 +19,6 @@ class BalanceService {
       throw new Error('USER_NOT_FOUND');
     }
 
-    // Ensure accountBalance is initialized
     if (userDoc.accountBalance === undefined) {
       userDoc.accountBalance = userDoc.totalInvestment || 0;
     }
@@ -32,14 +26,9 @@ class BalanceService {
     const previousTotalInvestment = userDoc.totalInvestment || 0;
     const previousAccountBalance = userDoc.accountBalance || 0;
 
-    // Add to both balances
     const newTotalInvestment = Number((previousTotalInvestment + usdValue).toFixed(8));
-    const newAccountBalance = Number((previousAccountBalance + usdValue).toFixed(8));
-
     userDoc.totalInvestment = newTotalInvestment;
-    userDoc.accountBalance = newAccountBalance;
 
-    // Add to portfolio
     await PortfolioService.addToPortfolio(
       userId,
       tokenName,
@@ -50,6 +39,8 @@ class BalanceService {
 
     await userDoc.save({ session });
 
+    const summary = await FinancialSummaryService.syncUserFinancialMetrics(userId, session);
+
     logger.info('💰 Funds added to user account and portfolio', {
       userId: userDoc._id,
       userEmail: userDoc.email,
@@ -57,7 +48,9 @@ class BalanceService {
       tokenAmount,
       usdValueAdded: usdValue,
       totalInvestment: { previous: previousTotalInvestment, new: newTotalInvestment },
-      accountBalance: { previous: previousAccountBalance, new: newAccountBalance }
+      accountBalance: { previous: previousAccountBalance, new: summary.accountBalance },
+      currentValue: summary.currentValue,
+      roi: summary.roi
     });
 
     return {
@@ -65,7 +58,9 @@ class BalanceService {
       previousTotalInvestment,
       newTotalInvestment,
       previousAccountBalance,
-      newAccountBalance,
+      newAccountBalance: summary.accountBalance,
+      currentValue: summary.currentValue,
+      roi: summary.roi,
       tokenAdded: {
         name: tokenName,
         amount: tokenAmount
@@ -75,12 +70,7 @@ class BalanceService {
 
   /**
    * Deduct funds from user account (for withdrawals)
-   * Updates accountBalance AND portfolio
-   * @param {String} userId - User ID
-   * @param {Number} usdValue - Amount to deduct in USD
-   * @param {String} tokenName - Token being withdrawn
-   * @param {Number} tokenAmount - Amount of tokens
-   * @param {Object} session - MongoDB session for transaction
+   * Updates portfolio only; totalInvestment unchanged; metrics sync refreshes ROI
    */
   static async deductFunds(userId, usdValue, tokenName, tokenAmount, session = null) {
     const userDoc = await User.findById(userId)
@@ -91,7 +81,6 @@ class BalanceService {
       throw new Error('USER_NOT_FOUND');
     }
 
-    // Ensure accountBalance is initialized
     if (userDoc.accountBalance === undefined) {
       userDoc.accountBalance = userDoc.totalInvestment || 0;
     }
@@ -99,7 +88,6 @@ class BalanceService {
     const currentAccountBalance = userDoc.accountBalance || 0;
     const totalInvestment = userDoc.totalInvestment || 0;
 
-    // Validate sufficient balance
     if (currentAccountBalance < usdValue) {
       const error = new Error('INSUFFICIENT_FUNDS');
       error.data = {
@@ -110,18 +98,14 @@ class BalanceService {
       throw error;
     }
 
-    // Deduct from portfolio first (this validates token balance)
-    const portfolioResult = await PortfolioService.deductFromPortfolio(
+    await PortfolioService.deductFromPortfolio(
       userId,
       tokenName,
       tokenAmount,
       session
     );
 
-    const newAccountBalance = Number((currentAccountBalance - usdValue).toFixed(8));
-    userDoc.accountBalance = newAccountBalance;
-
-    await userDoc.save({ session });
+    const summary = await FinancialSummaryService.syncUserFinancialMetrics(userId, session);
 
     logger.info('💸 Funds deducted from user account and portfolio', {
       userId: userDoc._id,
@@ -129,15 +113,20 @@ class BalanceService {
       tokenName,
       tokenAmount,
       usdValueDeducted: usdValue,
-      accountBalance: { previous: currentAccountBalance, new: newAccountBalance },
-      totalInvestment: totalInvestment
+      accountBalance: { previous: currentAccountBalance, new: summary.accountBalance },
+      lifetimeWithdrawals: summary.lifetimeWithdrawals,
+      currentValue: summary.currentValue,
+      roi: summary.roi,
+      totalInvestment
     });
 
     return {
       userEmail: userDoc.email,
       previousAccountBalance: currentAccountBalance,
-      newAccountBalance,
+      newAccountBalance: summary.accountBalance,
       totalInvestment,
+      currentValue: summary.currentValue,
+      roi: summary.roi,
       tokenDeducted: {
         name: tokenName,
         amount: tokenAmount
@@ -147,12 +136,15 @@ class BalanceService {
 
   /**
    * Settle trade/stock returns as USDT.
-   * Updates accountBalance + portfolio only — does NOT inflate totalInvestment.
+   * Does NOT inflate totalInvestment.
    * @param {String} userId
-   * @param {Number} usdValue - Final settlement value in USD
+   * @param {Number} usdValue - Final settlement value in USD (USDT amount 1:1)
    * @param {Object} session
+   * @param {Object} options
+   * @param {Number} [options.investedUsd] - Cost basis for USDT (defaults to usdValue).
+   *   Pass the trade's initial_investment so profit/loss is reflected in portfolio MTM.
    */
-  static async settleTradeReturn(userId, usdValue, session = null) {
+  static async settleTradeReturn(userId, usdValue, session = null, options = {}) {
     const userDoc = await User.findById(userId)
       .select('email totalInvestment accountBalance')
       .session(session);
@@ -161,74 +153,72 @@ class BalanceService {
       throw new Error('USER_NOT_FOUND');
     }
 
-    if (userDoc.accountBalance === undefined) {
-      userDoc.accountBalance = userDoc.totalInvestment || 0;
+    const settledValue = Number(Number(usdValue).toFixed(8));
+    if (settledValue < 0) {
+      throw new Error('INVALID_SETTLEMENT_VALUE');
     }
 
-    const previousAccountBalance = userDoc.accountBalance || 0;
-    const newAccountBalance = Number((previousAccountBalance + usdValue).toFixed(8));
-    userDoc.accountBalance = newAccountBalance;
+    const investedUsd =
+      options.investedUsd != null
+        ? Number(Number(options.investedUsd).toFixed(8))
+        : settledValue;
 
-    const usdtAmount = usdValue; // 1:1 USDT ≈ USD
+    const previousAccountBalance = userDoc.accountBalance || 0;
+    const usdtAmount = settledValue;
+
     await PortfolioService.addToPortfolio(
       userId,
       'USDT',
       usdtAmount,
-      usdValue,
+      investedUsd,
       session
     );
 
-    await userDoc.save({ session });
+    const summary = await FinancialSummaryService.syncUserFinancialMetrics(userId, session);
 
     logger.info('💵 Trade return settled as USDT (no totalInvestment change)', {
       userId: userDoc._id,
       userEmail: userDoc.email,
-      usdValue,
+      usdValue: settledValue,
+      investedUsd,
       usdtAmount,
-      accountBalance: { previous: previousAccountBalance, new: newAccountBalance },
+      accountBalance: { previous: previousAccountBalance, new: summary.accountBalance },
+      currentValue: summary.currentValue,
+      roi: summary.roi,
       totalInvestment: userDoc.totalInvestment
     });
 
     return {
       userEmail: userDoc.email,
       previousAccountBalance,
-      newAccountBalance,
+      newAccountBalance: summary.accountBalance,
       totalInvestment: userDoc.totalInvestment || 0,
+      currentValue: summary.currentValue,
+      roi: summary.roi,
       tokenAdded: { name: 'USDT', amount: usdtAmount }
     };
   }
 
   /**
    * Get user balance information
-   * @param {String} userId - User ID
-   * @returns {Object} - { totalInvestment, accountBalance, email }
    */
   static async getBalance(userId) {
-    const userDoc = await User.findById(userId)
-      .select('email totalInvestment accountBalance');
-
-    if (!userDoc) {
-      throw new Error('USER_NOT_FOUND');
-    }
-
-    // Ensure accountBalance is initialized (for existing users)
-    if (userDoc.accountBalance === undefined) {
-      userDoc.accountBalance = userDoc.totalInvestment || 0;
-      await userDoc.save();
-    }
+    const summary = await FinancialSummaryService.syncUserFinancialMetrics(userId);
 
     return {
-      email: userDoc.email,
-      totalInvestment: userDoc.totalInvestment || 0,
-      accountBalance: userDoc.accountBalance || 0
+      email: summary.email,
+      totalInvestment: summary.totalInvestment,
+      accountBalance: summary.accountBalance,
+      currentValue: summary.currentValue,
+      lockedValue: summary.lockedValue,
+      lifetimeWithdrawals: summary.lifetimeWithdrawals,
+      roi: summary.roi,
+      netGainLoss: summary.netGainLoss
     };
   }
 
   /**
-   * Check if user has sufficient balance for withdrawal
-   * @param {String} userId - User ID
-   * @param {Number} requiredAmount - Required amount in USD
-   * @returns {Object} - { hasSufficientFunds, accountBalance, deficit }
+   * Check if user has sufficient available balance for withdrawal
    */
   static async hasSufficientBalance(userId, requiredAmount) {
     const balance = await this.getBalance(userId);

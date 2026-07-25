@@ -1,10 +1,9 @@
 // services/copytrade-trading.service.js
-// Service for managing active copytrade purchases - hourly updates and completion
+// Service for managing active copytrade purchases - daily updates and completion
 import mongoose from 'mongoose';
 import CopytradePurchase from '../model/copytrade-purchase.model.js';
-import User from '../model/user.model.js';
-import PortfolioService from './portfolio.service.js';
 import BalanceService from './balance.service.js';
+import FinancialSummaryService from './financial-summary.service.js';
 import logger from '../utils/logger.js';
 import { notifyCopytradeCompleted } from '../utils/emailService.js';
 
@@ -12,8 +11,6 @@ class CopytradeTradingService {
   /**
    * Calculate daily profit/loss change based on risk level and progress.
    * Sized so values trend toward target ROI over trade_duration days.
-   * @param {Object} purchase - CopytradePurchase document
-   * @returns {Number} - Daily change percentage
    */
   static calculateDailyChange(purchase) {
     const { trade_risk, trade_roi_min, trade_roi_max, trade_start_date, trade_end_date, trade_duration } = purchase;
@@ -58,13 +55,11 @@ class CopytradeTradingService {
 
   /**
    * Update active trades with daily profit/loss changes
-   * @returns {Object} - Update statistics
    */
   static async updateActiveTrades() {
     try {
       const now = new Date();
       
-      // Find all active trades not yet expired
       const activeTrades = await CopytradePurchase.find({
         trade_status: 'active',
         trade_start_date: { $exists: true, $lte: now },
@@ -78,6 +73,7 @@ class CopytradeTradingService {
 
       let updatedCount = 0;
       let errors = 0;
+      const affectedUserIds = [];
 
       for (const purchase of activeTrades) {
         try {
@@ -90,6 +86,7 @@ class CopytradeTradingService {
           purchase.trade_current_value = newCurrentValue;
           await purchase.save();
 
+          affectedUserIds.push(purchase.user);
           updatedCount++;
 
           logger.debug('📊 Updated copytrade purchase (daily)', {
@@ -108,16 +105,21 @@ class CopytradeTradingService {
         }
       }
 
+      // Refresh currentValue / ROI so locked capital + unrealized P/L are reflected
+      const metricsSync = await FinancialSummaryService.syncUsers(affectedUserIds);
+
       logger.info('✅ Completed daily copytrade updates', {
         totalTrades: activeTrades.length,
         updated: updatedCount,
-        errors
+        errors,
+        metricsSynced: metricsSync.synced
       });
 
       return {
         totalTrades: activeTrades.length,
         updated: updatedCount,
-        errors
+        errors,
+        metricsSync
       };
     } catch (error) {
       logger.error('❌ Error updating active trades', {
@@ -129,15 +131,29 @@ class CopytradeTradingService {
   }
 
   /**
-   * Complete trades that have reached their end date
-   * Calculate final ROI based on risk level and add to user balance
-   * @returns {Object} - Completion statistics
+   * Resolve final settlement from the live trade path (win or loss).
+   */
+  static resolveFinalSettlement(purchase) {
+    const initial = Number(purchase.initial_investment) || 0;
+    const current = Number(purchase.trade_current_value);
+    const finalValue = Number(
+      Math.max(0, Number.isFinite(current) ? current : initial).toFixed(8)
+    );
+    const profitLoss = Number((finalValue - initial).toFixed(8));
+    const roiPercent =
+      initial > 0 ? Number(((profitLoss / initial) * 100).toFixed(4)) : 0;
+
+    return { finalValue, profitLoss, roiPercent, isProfit: profitLoss >= 0 };
+  }
+
+  /**
+   * Complete trades that have reached their end date.
+   * Settles simulated trade_current_value (successful or unsuccessful).
    */
   static async completeExpiredTrades() {
     try {
       const now = new Date();
       
-      // Find trades that have reached their end date
       const expiredTrades = await CopytradePurchase.find({
         trade_status: 'active',
         trade_end_date: { $exists: true, $lte: now }
@@ -166,39 +182,20 @@ class CopytradeTradingService {
 
         try {
           const userId = purchase.user;
-          const { trade_risk, trade_roi_min, trade_roi_max, initial_investment } = purchase;
+          const { initial_investment } = purchase;
+          const { finalValue, profitLoss, roiPercent, isProfit } =
+            this.resolveFinalSettlement(purchase);
 
-          // Calculate final ROI based on risk level
-          let finalROIPercent;
-          switch (trade_risk) {
-            case 'low':
-              finalROIPercent = trade_roi_min;
-              break;
-            case 'medium':
-              finalROIPercent = trade_roi_max;
-              break;
-            case 'high':
-              finalROIPercent = trade_roi_min;
-              break;
-            default:
-              finalROIPercent = trade_roi_min;
-          }
-
-          // Calculate final value: initial_investment + (initial_investment * ROI%)
-          const finalValue = Number((initial_investment * (1 + finalROIPercent / 100)).toFixed(8));
-
-          // Update purchase with final value and status
+          // Mark completed before settlement so locked capital excludes this trade
           purchase.trade_current_value = finalValue;
           purchase.trade_status = 'completed';
-          purchase.trade_profit_loss = Number((finalValue - initial_investment).toFixed(8));
-          purchase.isProfit = purchase.trade_profit_loss >= 0;
+          purchase.trade_profit_loss = profitLoss;
+          purchase.isProfit = isProfit;
           await purchase.save({ session });
 
-          // Settle final value as USDT without inflating totalInvestment
-          await BalanceService.settleTradeReturn(userId, finalValue, session);
-
-          // Recalculate accountBalance from portfolio (to sync with portfolio value)
-          await PortfolioService.recalculateAccountBalance(userId, session);
+          await BalanceService.settleTradeReturn(userId, finalValue, session, {
+            investedUsd: initial_investment
+          });
 
           await session.commitTransaction();
 
@@ -210,14 +207,15 @@ class CopytradeTradingService {
             userId,
             initialInvestment: initial_investment,
             finalValue,
-            roiPercent: finalROIPercent,
-            profitLoss: purchase.trade_profit_loss,
-            risk: trade_risk
+            roiPercent,
+            profitLoss,
+            isProfit,
+            risk: purchase.trade_risk
           });
 
           notifyCopytradeCompleted(userId, purchase, {
             finalValue,
-            roiPercent: finalROIPercent
+            roiPercent
           }).catch(() => {});
         } catch (error) {
           await session.abortTransaction();
@@ -228,7 +226,7 @@ class CopytradeTradingService {
           });
           errors++;
         } finally {
-          await session.endSession();
+          session.endSession();
         }
       }
 
@@ -254,14 +252,10 @@ class CopytradeTradingService {
   }
 
   /**
-   * Manually complete a single copytrade purchase (admin action)
-   * Calculates final ROI based on risk level and adds to user balance
-   * Updates trade_end_date to current date/time
-   * @param {String} purchaseId - CopytradePurchase ID
-   * @param {Object} session - MongoDB session for transaction (optional)
-   * @returns {Object} - Completion result
+   * Manually complete a single copytrade purchase (admin action).
+   * Settles current simulated value unless options.finalValue is provided.
    */
-  static async completeSingleTrade(purchaseId, session = null) {
+  static async completeSingleTrade(purchaseId, session = null, options = {}) {
     const shouldCreateSession = !session;
     if (shouldCreateSession) {
       session = await mongoose.startSession();
@@ -269,7 +263,6 @@ class CopytradeTradingService {
     }
 
     try {
-      // Find the purchase
       const purchase = await CopytradePurchase.findById(purchaseId).session(session);
       
       if (!purchase) {
@@ -278,7 +271,6 @@ class CopytradeTradingService {
         throw error;
       }
 
-      // Validate purchase is active
       if (purchase.trade_status !== 'active') {
         const error = new Error('PURCHASE_NOT_ACTIVE');
         error.data = { 
@@ -289,41 +281,40 @@ class CopytradeTradingService {
       }
 
       const userId = purchase.user;
-      const { trade_risk, trade_roi_min, trade_roi_max, initial_investment } = purchase;
+      const { initial_investment } = purchase;
 
-      // Calculate final ROI based on risk level
-      let finalROIPercent;
-      switch (trade_risk) {
-        case 'low':
-          finalROIPercent = trade_roi_min;
-          break;
-        case 'medium':
-          finalROIPercent = trade_roi_max;
-          break;
-        case 'high':
-          finalROIPercent = trade_roi_min;
-          break;
-        default:
-          finalROIPercent = trade_roi_min;
+      let finalValue;
+      let profitLoss;
+      let roiPercent;
+      let isProfit;
+
+      if (options.finalValue != null) {
+        finalValue = Number(Math.max(0, Number(options.finalValue)).toFixed(8));
+        profitLoss = Number((finalValue - initial_investment).toFixed(8));
+        roiPercent =
+          initial_investment > 0
+            ? Number(((profitLoss / initial_investment) * 100).toFixed(4))
+            : 0;
+        isProfit = profitLoss >= 0;
+      } else {
+        ({ finalValue, profitLoss, roiPercent, isProfit } =
+          this.resolveFinalSettlement(purchase));
       }
 
-      // Calculate final value: initial_investment + (initial_investment * ROI%)
-      const finalValue = Number((initial_investment * (1 + finalROIPercent / 100)).toFixed(8));
-
-      // Update purchase with final value, status, and end date
       const now = new Date();
       purchase.trade_current_value = finalValue;
       purchase.trade_status = 'completed';
-      purchase.trade_profit_loss = Number((finalValue - initial_investment).toFixed(8));
-      purchase.isProfit = purchase.trade_profit_loss >= 0;
-      purchase.trade_end_date = now; // Update end date to current time
+      purchase.trade_profit_loss = profitLoss;
+      purchase.isProfit = isProfit;
+      purchase.trade_end_date = now;
       await purchase.save({ session });
 
-      // Settle final value as USDT without inflating totalInvestment
-      await BalanceService.settleTradeReturn(userId, finalValue, session);
-
-      // Recalculate accountBalance from portfolio (to sync with portfolio value)
-      const newAccountBalance = await PortfolioService.recalculateAccountBalance(userId, session);
+      const settleResult = await BalanceService.settleTradeReturn(
+        userId,
+        finalValue,
+        session,
+        { investedUsd: initial_investment }
+      );
 
       if (shouldCreateSession) {
         await session.commitTransaction();
@@ -334,24 +325,28 @@ class CopytradeTradingService {
         userId,
         initialInvestment: initial_investment,
         finalValue,
-        roiPercent: finalROIPercent,
-        profitLoss: purchase.trade_profit_loss,
-        risk: trade_risk,
+        roiPercent,
+        profitLoss,
+        isProfit,
+        risk: purchase.trade_risk,
         newEndDate: now.toISOString(),
-        newAccountBalance
+        newAccountBalance: settleResult.newAccountBalance,
+        roi: settleResult.roi
       });
 
       notifyCopytradeCompleted(userId, purchase, {
         finalValue,
-        roiPercent: finalROIPercent
+        roiPercent
       }).catch(() => {});
 
       return {
         purchase,
         finalValue,
-        roiPercent: finalROIPercent,
-        profitLoss: purchase.trade_profit_loss,
-        newAccountBalance
+        roiPercent,
+        profitLoss,
+        newAccountBalance: settleResult.newAccountBalance,
+        currentValue: settleResult.currentValue,
+        roi: settleResult.roi
       };
     } catch (error) {
       if (shouldCreateSession) {
@@ -372,8 +367,6 @@ class CopytradeTradingService {
 
   /**
    * Process all active trades (complete expired, then daily update)
-   * Called by cron job at 3:00 AM WAT
-   * @returns {Object} - Processing statistics
    */
   static async processTrades() {
     try {
@@ -381,10 +374,7 @@ class CopytradeTradingService {
         timestamp: new Date().toISOString()
       });
 
-      // First, complete expired trades
       const completionStats = await this.completeExpiredTrades();
-
-      // Then, update remaining active trades
       const updateStats = await this.updateActiveTrades();
 
       return {
@@ -403,4 +393,3 @@ class CopytradeTradingService {
 }
 
 export default CopytradeTradingService;
-

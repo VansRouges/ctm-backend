@@ -118,7 +118,7 @@ class CopytradePurchaseService {
       trade_profit_loss: purchaseData.trade_profit_loss !== undefined 
         ? purchaseData.trade_profit_loss 
         : trade_current_value - initial_investment,
-      trade_status: 'pending', // Always pending on creation
+      trade_status: 'pending',
       trade_win_rate: purchaseData.trade_win_rate || null,
       trade_approval_date: purchaseData.trade_approval_date || null,
       trade_end_date: purchaseData.trade_end_date || null
@@ -126,17 +126,22 @@ class CopytradePurchaseService {
 
     const savedPurchase = await purchase.save({ session });
 
-    logger.info('📝 Copytrade purchase created (pending approval)', {
-      purchaseId: savedPurchase._id,
+    // Auto-activate immediately when funds are available (no admin approval)
+    const approval = await this.approvePurchase(savedPurchase, 'system_auto', session);
+
+    logger.info('📝 Copytrade purchase created and activated', {
+      purchaseId: approval.purchase._id,
       userId: user,
       userEmail: userDoc.email,
       tradeTitle: trade_title,
       initialInvestment: initial_investment,
-      status: 'pending'
+      status: approval.purchase.trade_status
     });
 
     return {
-      purchase: savedPurchase
+      purchase: approval.purchase,
+      deductions: approval.deductions,
+      newAccountBalance: approval.newAccountBalance
     };
   }
 
@@ -243,20 +248,19 @@ class CopytradePurchaseService {
       }
     }
 
-    // Recalculate accountBalance from remaining portfolio values
-    const newAccountBalance = await PortfolioService.recalculateAccountBalance(userId, session);
-
     // Set trade start date and calculate end date (duration in days)
     const tradeStartDate = new Date();
     const tradeEndDate = new Date(tradeStartDate);
     tradeEndDate.setDate(tradeEndDate.getDate() + purchase.trade_duration);
 
-    // Update purchase status to 'active' and set trading dates
+    // Activate first so equity sync includes locked capital
     purchase.trade_status = 'active';
     purchase.trade_approval_date = tradeStartDate.toISOString();
     purchase.trade_start_date = tradeStartDate;
     purchase.trade_end_date = tradeEndDate;
     await purchase.save({ session });
+
+    const newAccountBalance = await PortfolioService.recalculateAccountBalance(userId, session);
 
     logger.info('✅ Copytrade purchase approved with portfolio deduction', {
       purchaseId: purchase._id,

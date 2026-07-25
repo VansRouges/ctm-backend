@@ -91,7 +91,7 @@ class CopytradePurchaseController {
         // Invalidate audit cache
         await invalidateAuditCache();
 
-        logger.info('✅ Copytrade purchase created successfully (pending approval)', {
+        logger.info('✅ Copytrade purchase created and activated', {
           purchaseId: saved._id,
           userId: user,
           userEmail: req.user?.email,
@@ -105,10 +105,11 @@ class CopytradePurchaseController {
         
         res.status(201).json({ 
           success: true, 
-          message: 'Copytrade purchase created successfully (pending approval)', 
+          message: 'Copytrade purchase activated successfully', 
           data: {
             purchase: saved,
-            note: 'Balance will be deducted when admin approves (status changes to active)'
+            deductions: result.deductions,
+            newAccountBalance: result.newAccountBalance
           }
         });
       } catch (error) {
@@ -130,7 +131,7 @@ class CopytradePurchaseController {
           });
         }
 
-        if (error.message === 'INSUFFICIENT_FUNDS') {
+        if (error.message === 'INSUFFICIENT_FUNDS' || error.message === 'INSUFFICIENT_PORTFOLIO_VALUE') {
           logger.warn('⚠️ Insufficient funds for copytrade purchase', {
             userId: user,
             error: error.message,
@@ -140,6 +141,15 @@ class CopytradePurchaseController {
           return res.status(400).json({
             success: false,
             message: `Insufficient funds. Required: $${error.data.required}, Available: $${error.data.available}`,
+            error: error.message,
+            data: error.data
+          });
+        }
+
+        if (error.message === 'NO_PORTFOLIO_ENTRIES') {
+          return res.status(400).json({
+            success: false,
+            message: 'No portfolio balance available to fund this purchase. Please deposit first.',
             error: error.message,
             data: error.data
           });
@@ -682,7 +692,7 @@ class CopytradePurchaseController {
       session.startTransaction();
 
       try {
-        // Create purchase (status: pending, no balance deduction)
+        // Create + activate immediately (createPurchase auto-activates when funded)
         const result = await CopytradePurchaseService.createPurchase({
           user: userId,
           copytradeOptionId,
@@ -691,109 +701,58 @@ class CopytradePurchaseController {
 
         const saved = result.purchase;
 
-        // If autoApprove is true, approve the purchase immediately
-        if (autoApprove === true) {
-          const approvalResult = await CopytradePurchaseService.approvePurchase(
-            saved,
-            req.admin?.username,
-            session
-          );
+        await session.commitTransaction();
 
-          await session.commitTransaction();
-
-          // Create audit log
-          await createAuditLog(req, res, {
-            action: 'admin_copytrade_purchase_created_approved',
-            resourceType: 'copytrade_purchase',
-            resourceId: saved._id.toString(),
-            resourceName: saved.trade_title,
-            changes: {
-              before: { status: 'pending' },
-              after: { 
-                status: 'active',
-                initialInvestment: saved.initial_investment,
-                userBalance: approvalResult.newAccountBalance
-              }
-            },
-            description: `Admin ${req.admin?.username} created and approved copytrade purchase: ${saved.trade_title} - $${saved.initial_investment} for user ${userDoc.email}`
-          });
-
-          await invalidateAuditCache();
-
-          // Create notification for user
-          await createNotification({
-            action: 'copytrade_purchase',
-            userId: userId,
-            metadata: {
-              amount: initial_investment,
-              planName: saved.trade_title,
-              referenceId: saved._id.toString(),
-              adminCreated: true
+        await createAuditLog(req, res, {
+          action: 'admin_copytrade_purchase_created_approved',
+          resourceType: 'copytrade_purchase',
+          resourceId: saved._id.toString(),
+          resourceName: saved.trade_title,
+          changes: {
+            before: { status: 'pending' },
+            after: {
+              status: saved.trade_status,
+              initialInvestment: saved.initial_investment,
+              userBalance: result.newAccountBalance
             }
-          });
+          },
+          description: `Admin ${req.admin?.username} created copytrade purchase: ${saved.trade_title} - $${saved.initial_investment} for user ${userDoc.email}`
+        });
 
-          logger.info('✅ Admin created and approved copytrade purchase successfully', {
-            adminUsername: req.admin?.username,
-            purchaseId: saved._id,
-            userId,
-            userEmail: userDoc.email,
-            trade_title: saved.trade_title,
-            initial_investment: saved.initial_investment
-          });
+        await invalidateAuditCache();
 
-          return res.status(201).json({
-            success: true,
-            message: 'Copytrade purchase created and approved successfully',
-            data: {
-              purchase: saved,
-              deductions: approvalResult.deductions,
-              newAccountBalance: approvalResult.newAccountBalance
-            }
-          });
-        } else {
-          await session.commitTransaction();
+        await createNotification({
+          action: 'copytrade_purchase',
+          userId: userId,
+          metadata: {
+            amount: initial_investment,
+            planName: saved.trade_title,
+            referenceId: saved._id.toString(),
+            adminCreated: true
+          }
+        });
 
-          // Create audit log for creation only
-          await createAuditLog(req, res, {
-            action: 'admin_copytrade_purchase_created',
-            resourceType: 'copytrade_purchase',
-            resourceId: saved._id.toString(),
-            resourceName: saved.trade_title,
-            description: `Admin ${req.admin?.username} created copytrade purchase: ${saved.trade_title} - $${saved.initial_investment} for user ${userDoc.email} (pending approval)`
-          });
+        notifyCopytradePurchaseSubmitted(userId, saved).catch(() => {});
 
-          await invalidateAuditCache();
+        logger.info('✅ Admin created and activated copytrade purchase successfully', {
+          adminUsername: req.admin?.username,
+          purchaseId: saved._id,
+          userId,
+          userEmail: userDoc.email,
+          trade_title: saved.trade_title,
+          initial_investment: saved.initial_investment,
+          status: saved.trade_status
+        });
 
-          // Create notification for user
-          await createNotification({
-            action: 'copytrade_purchase',
-            userId: userId,
-            metadata: {
-              amount: initial_investment,
-              planName: saved.trade_title,
-              referenceId: saved._id.toString(),
-              adminCreated: true
-            }
-          });
-
-          logger.info('✅ Admin created copytrade purchase successfully (pending approval)', {
-            adminUsername: req.admin?.username,
-            purchaseId: saved._id,
-            userId,
-            userEmail: userDoc.email,
-            trade_title: saved.trade_title,
-            initial_investment: saved.initial_investment
-          });
-
-          return res.status(201).json({
-            success: true,
-            message: 'Copytrade purchase created successfully (pending approval)',
-            data: {
-              purchase: saved,
-              note: 'Balance will be deducted when admin approves (status changes to active)'
-            }
-          });
-        }
+        return res.status(201).json({
+          success: true,
+          message: 'Copytrade purchase created and activated successfully',
+          data: {
+            purchase: saved,
+            deductions: result.deductions,
+            newAccountBalance: result.newAccountBalance
+          }
+        });
       } catch (error) {
         await session.abortTransaction();
         throw error;

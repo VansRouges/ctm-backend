@@ -1,5 +1,6 @@
 // controllers/portfolio.controller.js
 import PortfolioService from '../services/portfolio.service.js';
+import FinancialSummaryService from '../services/financial-summary.service.js';
 import logger from '../utils/logger.js';
 
 class PortfolioController {
@@ -180,20 +181,21 @@ class PortfolioController {
   }
 
   /**
-   * Recalculate account balance from portfolio
+   * Recalculate account balance + equity metrics from portfolio and locked trades
    * POST /api/v1/portfolio/user/:userId/recalculate
    */
   static async recalculateBalance(req, res) {
     try {
       const { userId } = req.params;
 
-      const newBalance = await PortfolioService.recalculateAccountBalance(userId);
+      const summary = await FinancialSummaryService.syncUserFinancialMetrics(userId);
 
       res.json({
         success: true,
-        message: 'Account balance recalculated successfully',
+        message: 'Account balance and equity metrics recalculated successfully',
         data: {
-          newBalance
+          newBalance: summary.accountBalance,
+          ...summary
         }
       });
     } catch (error) {
@@ -205,6 +207,71 @@ class PortfolioController {
       res.status(500).json({
         success: false,
         message: 'Failed to recalculate balance',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Authenticated user's equity summary
+   * GET /api/v1/portfolio/my-financial-summary
+   */
+  static async getMyFinancialSummary(req, res) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: 'User authentication required'
+        });
+      }
+
+      const summary = await FinancialSummaryService.syncUserFinancialMetrics(userId);
+
+      res.json({
+        success: true,
+        data: summary
+      });
+    } catch (error) {
+      logger.error('❌ Error fetching financial summary', {
+        error: error.message,
+        userId: req.user?.userId
+      });
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch financial summary',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Admin: user's equity summary
+   * GET /api/v1/portfolio/user/:userId/financial-summary
+   */
+  static async getUserFinancialSummary(req, res) {
+    try {
+      const { userId } = req.params;
+      const summary = await FinancialSummaryService.syncUserFinancialMetrics(userId);
+
+      res.json({
+        success: true,
+        data: summary
+      });
+    } catch (error) {
+      logger.error('❌ Error fetching user financial summary', {
+        error: error.message,
+        userId: req.params.userId,
+        adminId: req.admin?.id
+      });
+
+      const status = error.message === 'USER_NOT_FOUND' ? 404 : 500;
+      res.status(status).json({
+        success: false,
+        message: error.message === 'USER_NOT_FOUND'
+          ? 'User not found'
+          : 'Failed to fetch financial summary',
         error: error.message
       });
     }

@@ -196,42 +196,42 @@ export function stockPurchaseSubmittedEmail({
   referenceId,
   createdAt,
 }) {
-  const subject = `Stock order received — ${symbol}`;
+  const subject = `Stock purchase confirmed — ${symbol}`;
   const html = layout({
-    title: 'Stock Purchase Request Received',
-    preheader: `Your order for ${quantity} ${symbol} is pending approval.`,
+    title: 'Stock Purchase Confirmed',
+    preheader: `Your purchase of ${quantity} ${symbol} is now active.`,
     greetingName: firstName,
     ctaLabel: 'View portfolio',
     ctaUrl: `${brand.dashboardUrl}/portfolio`,
     bodyHtml: `
       <p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#cfcfcf;">
-        Thank you for your stock order. It has been submitted and is currently
-        <strong style="color:#d4af37;">pending admin approval</strong>. Trading will begin only after approval.
+        Your stock purchase has been <strong style="color:#d4af37;">confirmed and activated</strong>.
+        You can track live mark-to-market value in your portfolio. Liquidation still requires admin review.
       </p>
       ${detailsTable([
         ['Symbol', symbol],
         ['Company', name],
         ['Quantity', String(quantity)],
-        ['Price at request', formatMoney(purchasePrice)],
-        ['Estimated investment', formatMoney(initialInvestment)],
-        ['Status', 'Pending'],
+        ['Purchase price', formatMoney(purchasePrice)],
+        ['Investment', formatMoney(initialInvestment)],
+        ['Status', 'Active'],
         ['Reference', referenceId],
-        ['Submitted', formatDate(createdAt)],
+        ['Confirmed', formatDate(createdAt)],
       ])}
     `,
   });
   const text = `Dear ${firstName || 'Valued Client'},
 
-Thank you for your stock order. It is pending admin approval.
+Your stock purchase has been confirmed and activated.
 
 Symbol: ${symbol}
 Company: ${name}
 Quantity: ${quantity}
-Price at request: ${formatMoney(purchasePrice)}
-Estimated investment: ${formatMoney(initialInvestment)}
-Status: Pending
+Purchase price: ${formatMoney(purchasePrice)}
+Investment: ${formatMoney(initialInvestment)}
+Status: Active
 Reference: ${referenceId}
-Submitted: ${formatDate(createdAt)}
+Confirmed: ${formatDate(createdAt)}
 
 View portfolio: ${brand.dashboardUrl}/portfolio
 
@@ -249,41 +249,40 @@ export function copytradePurchaseSubmittedEmail({
   referenceId,
   createdAt,
 }) {
-  const subject = `Copy trade request received — ${tradeTitle}`;
+  const subject = `Copy trade activated — ${tradeTitle}`;
   const html = layout({
-    title: 'Copy Trade Purchase Received',
-    preheader: `Your copy trade for ${tradeTitle} is pending approval.`,
+    title: 'Copy Trade Activated',
+    preheader: `Your copy trade for ${tradeTitle} is now active.`,
     greetingName: firstName,
     ctaLabel: 'View copy trades',
     ctaUrl: `${brand.dashboardUrl}/portfolio`,
     bodyHtml: `
       <p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#cfcfcf;">
-        We have received your copy trade purchase. It is currently
-        <strong style="color:#d4af37;">pending admin approval</strong>.
-        Once approved, the trade will become active for the stated duration.
+        Your copy trade purchase has been <strong style="color:#d4af37;">confirmed and activated</strong>.
+        Value updates run daily during the trade duration, and the trade will complete automatically at the end date.
       </p>
       ${detailsTable([
         ['Strategy', tradeTitle],
         ['Investment', formatMoney(initialInvestment)],
         ['Duration', `${duration} day${Number(duration) === 1 ? '' : 's'}`],
         ['Risk level', String(risk || '-')],
-        ['Status', 'Pending'],
+        ['Status', 'Active'],
         ['Reference', referenceId],
-        ['Submitted', formatDate(createdAt)],
+        ['Activated', formatDate(createdAt)],
       ])}
     `,
   });
   const text = `Dear ${firstName || 'Valued Client'},
 
-We have received your copy trade purchase. It is pending admin approval.
+Your copy trade purchase has been confirmed and activated.
 
 Strategy: ${tradeTitle}
 Investment: ${formatMoney(initialInvestment)}
 Duration: ${duration} day(s)
 Risk level: ${risk || '-'}
-Status: Pending
+Status: Active
 Reference: ${referenceId}
-Submitted: ${formatDate(createdAt)}
+Activated: ${formatDate(createdAt)}
 
 View portfolio: ${brand.dashboardUrl}/portfolio
 

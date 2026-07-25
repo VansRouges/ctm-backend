@@ -342,30 +342,31 @@ class PortfolioService {
   }
 
   /**
-   * Recalculate and sync user's accountBalance with portfolio
+   * Recalculate and sync user's accountBalance + equity metrics (currentValue, ROI)
    * @param {String} userId - User ID
    * @param {Object} session - MongoDB session
-   * @returns {Number} - New account balance
+   * @returns {Number} - New available account balance
    */
   static async recalculateAccountBalance(userId, session = null) {
     try {
-      const portfolio = await this.getUserPortfolio(userId);
-      const newAccountBalance = portfolio.totalCurrentValue;
-
-      // Update user's accountBalance
-      await User.findByIdAndUpdate(
+      // Lazy import avoids circular dependency with financial-summary → portfolio
+      const { default: FinancialSummaryService } = await import(
+        './financial-summary.service.js'
+      );
+      const summary = await FinancialSummaryService.syncUserFinancialMetrics(
         userId,
-        { accountBalance: Number(newAccountBalance.toFixed(8)) },
-        { session }
+        session
       );
 
-      logger.info('💰 Recalculated account balance from portfolio', {
+      logger.info('💰 Recalculated account balance and equity metrics', {
         userId,
-        newAccountBalance,
-        holdingsCount: portfolio.holdings.length
+        newAccountBalance: summary.accountBalance,
+        currentValue: summary.currentValue,
+        lockedValue: summary.lockedValue,
+        roi: summary.roi
       });
 
-      return newAccountBalance;
+      return summary.accountBalance;
     } catch (error) {
       logger.error('❌ Error recalculating account balance', {
         userId,
@@ -409,6 +410,8 @@ class PortfolioService {
               accountStatus: user.accountStatus,
               totalInvestment: user.totalInvestment,
               accountBalance: user.accountBalance,
+              currentValue: user.currentValue,
+              lifetimeWithdrawals: user.lifetimeWithdrawals,
               createdAt: user.createdAt,
               updatedAt: user.updatedAt
             },

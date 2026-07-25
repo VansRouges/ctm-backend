@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import User from '../model/user.model.js';
 import logger from '../utils/logger.js';
 import { createNotification } from '../utils/notificationHelper.js';
+import FinancialSummaryService from '../services/financial-summary.service.js';
 
 // Generate JWT token for user with 48 hour expiration
 const generateUserToken = (userId) => {
@@ -86,6 +87,17 @@ export const handleGoogleCallback = async (req, res) => {
 // Get current user profile (for authenticated users)
 export const getCurrentUser = async (req, res) => {
   try {
+    try {
+      await FinancialSummaryService.syncUserFinancialMetrics(req.user.userId);
+    } catch (syncError) {
+      if (syncError.message !== 'USER_NOT_FOUND') {
+        logger.warn('⚠️ Financial metrics sync failed on getCurrentUser', {
+          userId: req.user.userId,
+          error: syncError.message
+        });
+      }
+    }
+
     const user = await User.findById(req.user.userId)
       .select('-password -googleId')
       .lean();
@@ -109,7 +121,24 @@ export const getCurrentUser = async (req, res) => {
     res.json({
       success: true,
       data: {
-        user
+        user,
+        financialSummary: {
+          totalInvestment: user.totalInvestment || 0,
+          accountBalance: user.accountBalance || 0,
+          lockedValue: Number(
+            ((user.currentValue || 0) - (user.accountBalance || 0)).toFixed(8)
+          ),
+          currentValue: user.currentValue || 0,
+          lifetimeWithdrawals: user.lifetimeWithdrawals || 0,
+          roi: user.roi || 0,
+          netGainLoss: Number(
+            (
+              (user.currentValue || 0) +
+              (user.lifetimeWithdrawals || 0) -
+              (user.totalInvestment || 0)
+            ).toFixed(8)
+          )
+        }
       }
     });
 

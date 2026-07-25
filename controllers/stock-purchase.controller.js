@@ -48,7 +48,7 @@ class StockPurchaseController {
           resourceType: 'stock_purchase',
           resourceId: result.purchase._id.toString(),
           resourceName: result.purchase.symbol,
-          description: `Stock purchase request: ${result.purchase.quantity} ${result.purchase.symbol} ($${result.purchase.initial_investment})`
+          description: `Stock purchase activated: ${result.purchase.quantity} ${result.purchase.symbol} ($${result.purchase.initial_investment})`
         });
         await invalidateAuditCache();
 
@@ -57,8 +57,12 @@ class StockPurchaseController {
 
         return res.status(201).json({
           success: true,
-          message: 'Stock purchase created successfully (pending approval)',
-          data: { purchase: result.purchase }
+          message: 'Stock purchase completed successfully',
+          data: {
+            purchase: result.purchase,
+            deductions: result.deductions,
+            newAccountBalance: result.newAccountBalance
+          }
         });
       } catch (error) {
         await session.abortTransaction();
@@ -72,10 +76,17 @@ class StockPurchaseController {
       if (error.message === 'STOCK_NOT_FOUND') {
         return res.status(404).json({ success: false, message: 'Stock not found', data: error.data });
       }
-      if (error.message === 'INSUFFICIENT_FUNDS') {
+      if (error.message === 'INSUFFICIENT_FUNDS' || error.message === 'INSUFFICIENT_PORTFOLIO') {
         return res.status(400).json({
           success: false,
-          message: `Insufficient funds. Required: $${error.data.required}, Available: $${error.data.available}`,
+          message: `Insufficient funds. Required: $${error.data?.required}, Available: $${error.data?.available}`,
+          data: error.data
+        });
+      }
+      if (error.message === 'NO_PORTFOLIO_ENTRIES') {
+        return res.status(400).json({
+          success: false,
+          message: 'No portfolio balance available to fund this purchase. Please deposit first.',
           data: error.data
         });
       }

@@ -100,15 +100,23 @@ class StockPurchaseService {
 
     const saved = await purchase.save({ session });
 
-    logger.info('📝 Stock purchase created (pending approval)', {
-      purchaseId: saved._id,
+    // Auto-activate immediately when funds are available (no admin approval)
+    const approval = await this.approvePurchase(saved, 'system_auto', session);
+
+    logger.info('📝 Stock purchase created and activated', {
+      purchaseId: approval.purchase._id,
       userId: user,
-      symbol: saved.symbol,
+      symbol: approval.purchase.symbol,
       quantity,
-      initialInvestment
+      initialInvestment,
+      status: approval.purchase.stock_status
     });
 
-    return { purchase: saved };
+    return {
+      purchase: approval.purchase,
+      deductions: approval.deductions,
+      newAccountBalance: approval.newAccountBalance
+    };
   }
 
   /**
@@ -180,12 +188,13 @@ class StockPurchaseService {
       }
     }
 
-    const newAccountBalance = await PortfolioService.recalculateAccountBalance(userId, session);
-
     purchase.stock_status = 'active';
     purchase.approved_by = adminUsername;
     purchase.approved_at = new Date();
     await purchase.save({ session });
+
+    // Sync after activate so currentValue includes locked stock capital
+    const newAccountBalance = await PortfolioService.recalculateAccountBalance(userId, session);
 
     logger.info('✅ Stock purchase approved', {
       purchaseId: purchase._id,
@@ -235,14 +244,7 @@ class StockPurchaseService {
         ? isProfit
         : settledValue >= purchase.initial_investment;
 
-    const balanceUpdate = await BalanceService.settleTradeReturn(
-      purchase.user,
-      settledValue,
-      session
-    );
-
-    await PortfolioService.recalculateAccountBalance(purchase.user, session);
-
+    // Mark completed before settlement so locked capital excludes this holding
     purchase.stock_status = 'completed';
     purchase.admin_final_value = settledValue;
     purchase.admin_is_profit = profitFlag;
@@ -250,11 +252,20 @@ class StockPurchaseService {
     purchase.settled_by = adminUsername;
     await purchase.save({ session });
 
+    const balanceUpdate = await BalanceService.settleTradeReturn(
+      purchase.user,
+      settledValue,
+      session,
+      { investedUsd: purchase.initial_investment }
+    );
+
     logger.info('🏁 Stock liquidation settled', {
       purchaseId: purchase._id,
       finalValue: settledValue,
       isProfit: profitFlag,
-      adminUsername
+      adminUsername,
+      currentValue: balanceUpdate.currentValue,
+      roi: balanceUpdate.roi
     });
 
     return { purchase, balanceUpdate };

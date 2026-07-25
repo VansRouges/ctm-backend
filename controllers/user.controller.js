@@ -2,6 +2,7 @@ import User from "../model/user.model.js";
 import { createNotification } from "../utils/notificationHelper.js";
 import { createAuditLog } from "../utils/auditHelper.js";
 import { invalidateAuditCache } from "./audit-log.controller.js";
+import FinancialSummaryService from "../services/financial-summary.service.js";
 import logger from "../utils/logger.js";
 
 // Get all users
@@ -49,10 +50,23 @@ const getUsers = async (req, res, next) => {
   }
 };
 
-// Get single user by ID
+// Get single user by ID (refreshes equity metrics before returning)
 const getUserById = async (req, res, next) => {
   try {
-    const user = await User.findById(req.params.id);
+    const userId = req.params.id;
+
+    try {
+      await FinancialSummaryService.syncUserFinancialMetrics(userId);
+    } catch (syncError) {
+      if (syncError.message !== 'USER_NOT_FOUND') {
+        logger.warn('⚠️ Financial metrics sync failed on getUserById', {
+          userId,
+          error: syncError.message
+        });
+      }
+    }
+
+    const user = await User.findById(userId);
     
     if (!user) {
       return res.status(404).json({
@@ -61,12 +75,31 @@ const getUserById = async (req, res, next) => {
       });
     }
 
+    const summary = {
+      totalInvestment: user.totalInvestment || 0,
+      accountBalance: user.accountBalance || 0,
+      lockedValue: Number(
+        ((user.currentValue || 0) - (user.accountBalance || 0)).toFixed(8)
+      ),
+      currentValue: user.currentValue || 0,
+      lifetimeWithdrawals: user.lifetimeWithdrawals || 0,
+      roi: user.roi || 0,
+      netGainLoss: Number(
+        (
+          (user.currentValue || 0) +
+          (user.lifetimeWithdrawals || 0) -
+          (user.totalInvestment || 0)
+        ).toFixed(8)
+      )
+    };
+
     res.json({
       success: true,
       message: 'User retrieved successfully',
-      data: user
+      data: user,
+      financialSummary: summary
     });
-    next(); // Call next middleware if needed
+    next();
   } catch (error) {
     res.status(500).json({
       success: false,
