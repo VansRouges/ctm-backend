@@ -5,6 +5,7 @@ import DepositService from '../services/deposit.service.js';
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
+import { notifyDepositSubmitted } from '../utils/emailService.js';
 import logger from '../utils/logger.js';
 
 class DepositController {
@@ -120,6 +121,9 @@ class DepositController {
           referenceId: savedDeposit._id.toString()
         }
       });
+
+      // User confirmation email (non-blocking)
+      notifyDepositSubmitted(user, savedDeposit).catch(() => {});
 
       res.status(201).json({
         success: true,

@@ -1,12 +1,14 @@
 // jobs/copytrade-trading.job.js
-// Cron job to update active copytrade purchases hourly and complete expired trades
+// Cron job: daily at 3:00 AM WAT — update active copytrades and auto-complete expired ones
 import cron from 'node-cron';
 import CopytradeTradingService from '../services/copytrade-trading.service.js';
 import logger from '../utils/logger.js';
 
 class CopytradeTradingJob {
   constructor() {
-    this.cronSchedule = '0 * * * *'; // Every hour at minute 0 (e.g., 1:00, 2:00, 3:00)
+    // 3:00 AM West Africa Time (Africa/Lagos)
+    this.cronSchedule = '0 3 * * *';
+    this.timezone = 'Africa/Lagos';
     this.cronJob = null;
     this.isRunning = false;
     this.lastRunTime = null;
@@ -19,10 +21,6 @@ class CopytradeTradingJob {
     };
   }
 
-  /**
-   * Execute the trading process
-   * @returns {Object} - Processing statistics
-   */
   async execute() {
     if (this.isRunning) {
       logger.warn('⏸️ Copytrade trading job already running, skipping...');
@@ -33,7 +31,7 @@ class CopytradeTradingJob {
     const startTime = Date.now();
 
     try {
-      logger.info('🚀 Starting copytrade trading job', {
+      logger.info('🚀 Starting copytrade trading job (3am WAT)', {
         timestamp: new Date().toISOString()
       });
 
@@ -64,9 +62,6 @@ class CopytradeTradingJob {
     }
   }
 
-  /**
-   * Start the cron scheduler
-   */
   startScheduler() {
     if (this.cronJob) {
       logger.warn('⚠️ Copytrade trading job scheduler already started');
@@ -83,21 +78,16 @@ class CopytradeTradingJob {
       }
     }, {
       scheduled: true,
-      timezone: 'UTC'
+      timezone: this.timezone
     });
 
     logger.info('✅ Copytrade trading job scheduler started', {
       schedule: this.cronSchedule,
-      description: 'Runs every hour to update active trades and complete expired trades'
+      timezone: this.timezone,
+      description: 'Runs daily at 3:00 AM WAT to update active trades and complete expired trades'
     });
-
-    // Run immediately on startup (optional - comment out if not desired)
-    // this.execute();
   }
 
-  /**
-   * Stop the cron scheduler
-   */
   stopScheduler() {
     if (this.cronJob) {
       this.cronJob.stop();
@@ -106,23 +96,16 @@ class CopytradeTradingJob {
     }
   }
 
-  /**
-   * Get job statistics
-   * @returns {Object} - Job statistics
-   */
   getStats() {
     return {
       ...this.stats,
       isRunning: this.isRunning,
       lastRunTime: this.lastRunTime,
-      schedule: this.cronSchedule
+      schedule: this.cronSchedule,
+      timezone: this.timezone
     };
   }
 
-  /**
-   * Manually trigger the job (for testing/admin use)
-   * @returns {Object} - Processing statistics
-   */
   async runNow() {
     logger.info('🔧 Manually triggering copytrade trading job');
     return await this.execute();
@@ -130,4 +113,3 @@ class CopytradeTradingJob {
 }
 
 export default CopytradeTradingJob;
-

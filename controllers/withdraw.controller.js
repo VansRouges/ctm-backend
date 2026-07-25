@@ -6,6 +6,7 @@ import WithdrawService from '../services/withdraw.service.js';
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
+import { notifyWithdrawalSubmitted } from '../utils/emailService.js';
 import logger from '../utils/logger.js';
 
 class WithdrawController {
@@ -187,16 +188,17 @@ class WithdrawController {
 
       // Create notification
       await createNotification({
-        action: 'withdraw_created',
-        description: `New withdrawal request for ${amount} ${token_name}`,
+        action: 'withdraw',
+        userId: user,
         metadata: {
-          userId: user,
-          withdrawId: withdraw._id.toString(),
           amount,
-          token_name,
+          currency: token_name,
           referenceId: withdraw._id.toString()
         }
       });
+
+      // User confirmation email (non-blocking)
+      notifyWithdrawalSubmitted(user, withdraw).catch(() => {});
       
       res.status(201).json({
         success: true,

@@ -99,6 +99,12 @@ const generateDescription = (action, user, metadata = {}) => {
       }
       return `${userIdentifier} just made a copytrade purchase`;
 
+    case 'stock_purchase':
+      if (metadata.planName) {
+        return `${userIdentifier} stock activity: ${metadata.planName}`;
+      }
+      return `${userIdentifier} just made a stock purchase request`;
+
     case 'support_ticket':
       if (metadata.subject) {
         return `${userIdentifier} just created a support ticket: "${metadata.subject}"`;

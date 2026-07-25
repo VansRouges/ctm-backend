@@ -14,6 +14,7 @@ import userSupportRouter from './routes/user-support.route.js'; // Import user s
 import depositRouter from './routes/deposit.route.js';
 import withdrawRouter from './routes/withdraw.route.js';
 import copytradePurchaseRouter from './routes/copytrade-purchase.route.js';
+import stockPurchaseRouter from './routes/stock-purchase.route.js';
 import adminAuthRouter from './routes/admin-auth.route.js';
 import notificationRouter from './routes/notification.route.js';
 import auditLogRouter from './routes/audit-log.route.js';
@@ -95,6 +96,7 @@ app.use('/api/v1/user-support', userSupportRouter);
 app.use('/api/v1/deposits', depositRouter);
 app.use('/api/v1/withdraws', withdrawRouter);
 app.use('/api/v1/copytrade-purchases', copytradePurchaseRouter);
+app.use('/api/v1/stock-purchases', stockPurchaseRouter);
 app.use('/api/v1/admin/auth', adminAuthRouter);
 app.use('/api/v1/notifications', notificationRouter);
 app.use('/api/v1/audit-logs', auditLogRouter);

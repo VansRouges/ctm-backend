@@ -6,32 +6,21 @@ const aj = arcjet({
   // variable rather than hard coding.
   key: ARCJET_API_KEY,
   characteristics: ["ip.src"], // Track by IP address by default
-  // If you want to track by user ID, set characteristics to ["user.id"]
-  // and pass the user ID
   rules: [
     // Shield protects your app from common attacks e.g. SQL injection
     shield({ mode: "LIVE" }),
-    // Create a bot detection rule
+    // Deny known-bad bots only. Allow-list mode was blocking Next.js server
+    // actions (Undici / Node fetch), which emptied stocks, copytrade, and admin UIs.
     detectBot({
-      mode: "LIVE", // Blocks requests. Use "DRY_RUN" to log only
-      // Block all bots except the following
-      allow: [
-        "CATEGORY:SEARCH_ENGINE", // Google, Bing, etc
-        // Uncomment to allow these other common bot categories
-        // See the full list at https://arcjet.com/bot-list
-        //"CATEGORY:MONITOR", // Uptime monitoring services
-        //"CATEGORY:PREVIEW", // Link previews e.g. Slack, Discord
-      ],
+      mode: "LIVE",
+      deny: ["CATEGORY:BOTNET"],
     }),
-    // Create a token bucket rate limit. Other algorithms are supported.
+    // Rate limit — sized for dashboard loads (stocks + options + portfolio)
     tokenBucket({
       mode: "LIVE",
-      // Tracked by IP address by default, but this can be customized
-      // See https://docs.arcjet.com/fingerprints
-      //characteristics: ["ip.src"],
-      refillRate: 5, // Refill 5 tokens per interval
+      refillRate: 30, // Refill 30 tokens per interval
       interval: 10, // Refill every 10 seconds
-      capacity: 10, // Bucket capacity of 10 tokens
+      capacity: 60, // Bucket capacity
     }),
   ],
 });

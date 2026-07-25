@@ -146,6 +146,59 @@ class BalanceService {
   }
 
   /**
+   * Settle trade/stock returns as USDT.
+   * Updates accountBalance + portfolio only — does NOT inflate totalInvestment.
+   * @param {String} userId
+   * @param {Number} usdValue - Final settlement value in USD
+   * @param {Object} session
+   */
+  static async settleTradeReturn(userId, usdValue, session = null) {
+    const userDoc = await User.findById(userId)
+      .select('email totalInvestment accountBalance')
+      .session(session);
+
+    if (!userDoc) {
+      throw new Error('USER_NOT_FOUND');
+    }
+
+    if (userDoc.accountBalance === undefined) {
+      userDoc.accountBalance = userDoc.totalInvestment || 0;
+    }
+
+    const previousAccountBalance = userDoc.accountBalance || 0;
+    const newAccountBalance = Number((previousAccountBalance + usdValue).toFixed(8));
+    userDoc.accountBalance = newAccountBalance;
+
+    const usdtAmount = usdValue; // 1:1 USDT ≈ USD
+    await PortfolioService.addToPortfolio(
+      userId,
+      'USDT',
+      usdtAmount,
+      usdValue,
+      session
+    );
+
+    await userDoc.save({ session });
+
+    logger.info('💵 Trade return settled as USDT (no totalInvestment change)', {
+      userId: userDoc._id,
+      userEmail: userDoc.email,
+      usdValue,
+      usdtAmount,
+      accountBalance: { previous: previousAccountBalance, new: newAccountBalance },
+      totalInvestment: userDoc.totalInvestment
+    });
+
+    return {
+      userEmail: userDoc.email,
+      previousAccountBalance,
+      newAccountBalance,
+      totalInvestment: userDoc.totalInvestment || 0,
+      tokenAdded: { name: 'USDT', amount: usdtAmount }
+    };
+  }
+
+  /**
    * Get user balance information
    * @param {String} userId - User ID
    * @returns {Object} - { totalInvestment, accountBalance, email }

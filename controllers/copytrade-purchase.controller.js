@@ -6,6 +6,7 @@ import { createAuditLog } from '../utils/auditHelper.js';
 import { invalidateAuditCache } from './audit-log.controller.js';
 import CopytradePurchaseService from '../services/copytrade-purchase.service.js';
 import CopytradeTradingService from '../services/copytrade-trading.service.js';
+import { notifyCopytradePurchaseSubmitted } from '../utils/emailService.js';
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 
@@ -98,6 +99,9 @@ class CopytradePurchaseController {
           initial_investment: saved.initial_investment,
           status: saved.trade_status
         });
+
+        // User confirmation email (non-blocking)
+        notifyCopytradePurchaseSubmitted(user, saved).catch(() => {});
         
         res.status(201).json({ 
           success: true, 

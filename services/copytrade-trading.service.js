@@ -6,70 +6,72 @@ import User from '../model/user.model.js';
 import PortfolioService from './portfolio.service.js';
 import BalanceService from './balance.service.js';
 import logger from '../utils/logger.js';
+import { notifyCopytradeCompleted } from '../utils/emailService.js';
 
 class CopytradeTradingService {
   /**
-   * Calculate hourly profit/loss change based on risk level and progress
-   * Simulates realistic trading fluctuations
+   * Calculate daily profit/loss change based on risk level and progress.
+   * Sized so values trend toward target ROI over trade_duration days.
    * @param {Object} purchase - CopytradePurchase document
-   * @returns {Number} - Hourly change percentage (-1% to +1% range)
+   * @returns {Number} - Daily change percentage
    */
-  static calculateHourlyChange(purchase) {
-    const { trade_risk, trade_roi_min, trade_roi_max, trade_start_date, trade_end_date } = purchase;
+  static calculateDailyChange(purchase) {
+    const { trade_risk, trade_roi_min, trade_roi_max, trade_start_date, trade_end_date, trade_duration } = purchase;
     
-    // Calculate progress (0 to 1)
     const now = new Date();
     const totalDuration = trade_end_date - trade_start_date;
     const elapsed = now - trade_start_date;
     const progress = Math.min(Math.max(elapsed / totalDuration, 0), 1);
 
-    // Base volatility based on risk level
     let volatility;
     switch (trade_risk) {
       case 'low':
-        volatility = 0.3; // Lower volatility
+        volatility = 0.8;
         break;
       case 'medium':
-        volatility = 0.6; // Medium volatility
+        volatility = 1.5;
         break;
       case 'high':
-        volatility = 1.0; // Higher volatility
+        volatility = 2.5;
         break;
       default:
-        volatility = 0.5;
+        volatility = 1.2;
     }
 
-    // Generate random change between -volatility% and +volatility%
-    // As trade progresses, trend towards final ROI
     const targetROI = trade_risk === 'medium' ? trade_roi_max : trade_roi_min;
-    const targetChange = (targetROI / 100) / (purchase.trade_duration * 24); // Average hourly change to reach target
+    const days = Math.max(trade_duration || 1, 1);
+    const targetDailyChange = (targetROI / 100) / days;
+
+    const randomChange = (Math.random() * 2 - 1) * volatility;
+    const trendComponent = targetDailyChange * 100 * (0.4 + progress * 0.6);
     
-    // Random fluctuation + trend towards target
-    const randomChange = (Math.random() * 2 - 1) * volatility; // -volatility to +volatility
-    const trendComponent = targetChange * progress * 0.5; // Gradually trend towards target
+    const dailyChangePercent = randomChange + trendComponent;
     
-    const hourlyChangePercent = randomChange + trendComponent;
-    
-    // Clamp to reasonable range (-1% to +1%)
-    return Math.max(-1, Math.min(1, hourlyChangePercent));
+    // Clamp to reasonable daily range (-3% to +5%)
+    return Math.max(-3, Math.min(5, dailyChangePercent));
+  }
+
+  /** @deprecated Use calculateDailyChange */
+  static calculateHourlyChange(purchase) {
+    return this.calculateDailyChange(purchase);
   }
 
   /**
-   * Update active trades with hourly profit/loss changes
+   * Update active trades with daily profit/loss changes
    * @returns {Object} - Update statistics
    */
   static async updateActiveTrades() {
     try {
       const now = new Date();
       
-      // Find all active trades
+      // Find all active trades not yet expired
       const activeTrades = await CopytradePurchase.find({
         trade_status: 'active',
         trade_start_date: { $exists: true, $lte: now },
-        trade_end_date: { $exists: true, $gt: now } // Not yet completed
+        trade_end_date: { $exists: true, $gt: now }
       });
 
-      logger.info('📈 Updating active copytrade purchases', {
+      logger.info('📈 Updating active copytrade purchases (daily)', {
         activeTradesCount: activeTrades.length,
         timestamp: now.toISOString()
       });
@@ -79,25 +81,23 @@ class CopytradeTradingService {
 
       for (const purchase of activeTrades) {
         try {
-          // Calculate hourly change percentage
-          const hourlyChangePercent = this.calculateHourlyChange(purchase);
+          const previousValue = purchase.trade_current_value;
+          const dailyChangePercent = this.calculateDailyChange(purchase);
           
-          // Apply change to current value
-          const changeAmount = purchase.trade_current_value * (hourlyChangePercent / 100);
+          const changeAmount = purchase.trade_current_value * (dailyChangePercent / 100);
           const newCurrentValue = Number(Math.max(0, purchase.trade_current_value + changeAmount).toFixed(8));
           
-          // Update purchase (pre-save hook will recalculate trade_profit_loss and isProfit)
           purchase.trade_current_value = newCurrentValue;
           await purchase.save();
 
           updatedCount++;
 
-          logger.debug('📊 Updated copytrade purchase', {
+          logger.debug('📊 Updated copytrade purchase (daily)', {
             purchaseId: purchase._id,
             userId: purchase.user,
-            previousValue: purchase.trade_current_value - changeAmount,
+            previousValue,
             newValue: newCurrentValue,
-            hourlyChange: hourlyChangePercent.toFixed(4) + '%'
+            dailyChange: dailyChangePercent.toFixed(4) + '%'
           });
         } catch (error) {
           logger.error('❌ Error updating copytrade purchase', {
@@ -108,7 +108,7 @@ class CopytradeTradingService {
         }
       }
 
-      logger.info('✅ Completed hourly copytrade updates', {
+      logger.info('✅ Completed daily copytrade updates', {
         totalTrades: activeTrades.length,
         updated: updatedCount,
         errors
@@ -194,10 +194,8 @@ class CopytradeTradingService {
           purchase.isProfit = purchase.trade_profit_loss >= 0;
           await purchase.save({ session });
 
-          // Add final value to user's accountBalance and portfolio as USDT
-          // Convert USD value to USDT (assuming 1:1 for simplicity, or use current USDT price)
-          const usdtAmount = finalValue; // Assuming USDT ≈ $1
-          await BalanceService.addFunds(userId, finalValue, 'USDT', usdtAmount, session);
+          // Settle final value as USDT without inflating totalInvestment
+          await BalanceService.settleTradeReturn(userId, finalValue, session);
 
           // Recalculate accountBalance from portfolio (to sync with portfolio value)
           await PortfolioService.recalculateAccountBalance(userId, session);
@@ -217,7 +215,10 @@ class CopytradeTradingService {
             risk: trade_risk
           });
 
-          // TODO: Create notification for user about trade completion
+          notifyCopytradeCompleted(userId, purchase, {
+            finalValue,
+            roiPercent: finalROIPercent
+          }).catch(() => {});
         } catch (error) {
           await session.abortTransaction();
           logger.error('❌ Error completing copytrade purchase', {
@@ -318,9 +319,8 @@ class CopytradeTradingService {
       purchase.trade_end_date = now; // Update end date to current time
       await purchase.save({ session });
 
-      // Add final value to user's accountBalance and portfolio as USDT
-      const usdtAmount = finalValue; // Assuming USDT ≈ $1
-      await BalanceService.addFunds(userId, finalValue, 'USDT', usdtAmount, session);
+      // Settle final value as USDT without inflating totalInvestment
+      await BalanceService.settleTradeReturn(userId, finalValue, session);
 
       // Recalculate accountBalance from portfolio (to sync with portfolio value)
       const newAccountBalance = await PortfolioService.recalculateAccountBalance(userId, session);
@@ -340,6 +340,11 @@ class CopytradeTradingService {
         newEndDate: now.toISOString(),
         newAccountBalance
       });
+
+      notifyCopytradeCompleted(userId, purchase, {
+        finalValue,
+        roiPercent: finalROIPercent
+      }).catch(() => {});
 
       return {
         purchase,
@@ -366,20 +371,20 @@ class CopytradeTradingService {
   }
 
   /**
-   * Process all active trades (update + complete)
-   * Called by cron job every hour
+   * Process all active trades (complete expired, then daily update)
+   * Called by cron job at 3:00 AM WAT
    * @returns {Object} - Processing statistics
    */
   static async processTrades() {
     try {
-      logger.info('🔄 Starting copytrade trading process', {
+      logger.info('🔄 Starting copytrade trading process (daily WAT)', {
         timestamp: new Date().toISOString()
       });
 
       // First, complete expired trades
       const completionStats = await this.completeExpiredTrades();
 
-      // Then, update active trades
+      // Then, update remaining active trades
       const updateStats = await this.updateActiveTrades();
 
       return {
