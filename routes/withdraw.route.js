@@ -1,31 +1,26 @@
 import express from 'express';
 import WithdrawController from '../controllers/withdraw.controller.js';
 import { requireAdminAuth } from '../middlewares/auth.middleware.js';
+import { requireUserAuth } from '../middlewares/user-auth.middleware.js';
+import { requireKycApproved } from '../middlewares/kyc.middleware.js';
+import { requireUserOrAdminAuth } from '../middlewares/user-or-admin-auth.middleware.js';
 
 const withdrawRouter = express.Router();
 
-// GET /api/withdraws - Get all withdraws (admin only)
 withdrawRouter.get('/', requireAdminAuth, WithdrawController.getAllWithdraws);
-
-// POST /api/withdraws/admin - Admin create withdrawal for user
 withdrawRouter.post('/admin', requireAdminAuth, WithdrawController.createWithdrawForUser);
 
-// POST /api/withdraws - Create new withdraw
-withdrawRouter.post('/', WithdrawController.createWithdraw);
+withdrawRouter.post('/', requireUserAuth, requireKycApproved, WithdrawController.createWithdraw);
 
-// GET /api/withdraws/:id - Get withdraw by ID
-withdrawRouter.get('/:id', WithdrawController.getWithdrawById);
+withdrawRouter.get('/user/:userId', requireUserOrAdminAuth, WithdrawController.getUserWithdraws);
+withdrawRouter.get(
+  '/user/:userId/status/:status',
+  requireUserOrAdminAuth,
+  WithdrawController.getUserWithdrawsByStatus
+);
 
-// PUT /api/withdraws/:id - Update withdraw
+withdrawRouter.get('/:id', requireUserOrAdminAuth, WithdrawController.getWithdrawById);
 withdrawRouter.put('/:id', requireAdminAuth, WithdrawController.updateWithdraw);
-
-// DELETE /api/withdraws/:id - Delete withdraw (admin only)
 withdrawRouter.delete('/:id', requireAdminAuth, WithdrawController.deleteWithdraw);
-
-// GET /api/withdraws/user/:userId - Get withdraws for specific user
-withdrawRouter.get('/user/:userId', WithdrawController.getUserWithdraws);
-
-// GET /api/withdraws/user/:userId/status/:status - Get withdraws by status for specific user
-withdrawRouter.get('/user/:userId/status/:status', WithdrawController.getUserWithdrawsByStatus);
 
 export default withdrawRouter;

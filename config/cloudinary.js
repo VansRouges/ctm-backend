@@ -2,25 +2,22 @@ import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
 import logger from '../utils/logger.js';
 
-// Configure Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Create multer upload middleware for memory storage
 export const uploadKYCDocument = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 16 * 1024 * 1024, // 16MB limit
-    files: 5 // Maximum 5 files per request
+    fileSize: 16 * 1024 * 1024,
+    files: 5
   },
   fileFilter: (req, file, cb) => {
-    // Check file type
     const allowedMimes = [
       'image/jpeg',
-      'image/jpg', 
+      'image/jpg',
       'image/png',
       'image/gif',
       'image/webp',
@@ -39,27 +36,33 @@ export const uploadKYCDocument = multer({
   }
 });
 
-// Helper function to upload buffer to Cloudinary
+/**
+ * Upload KYC docs as authenticated (private) Cloudinary assets.
+ */
 export const uploadToCloudinary = async (buffer, filename, userId) => {
   return new Promise((resolve, reject) => {
-    const uniqueFilename = `${userId}_${Date.now()}_${filename}`;
-    
+    const safeName = String(filename || 'document')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .slice(0, 80);
+    const uniqueFilename = `${userId}_${Date.now()}_${safeName}`;
+
     cloudinary.uploader.upload_stream(
       {
         folder: 'kyc-documents',
         public_id: uniqueFilename,
         resource_type: 'auto',
-        quality: 'auto:good',
-        fetch_format: 'auto'
+        type: 'authenticated',
+        access_mode: 'authenticated',
+        quality: 'auto:good'
       },
       (error, result) => {
         if (error) {
           logger.error('❌ Cloudinary upload error:', error);
           reject(error);
         } else {
-          logger.info('✅ File uploaded to Cloudinary', {
+          logger.info('✅ Private KYC file uploaded to Cloudinary', {
             publicId: result.public_id,
-            url: result.secure_url,
+            resourceType: result.resource_type,
             userId
           });
           resolve(result);
@@ -69,10 +72,62 @@ export const uploadToCloudinary = async (buffer, filename, userId) => {
   });
 };
 
-// Helper function to delete file from Cloudinary
-export const deleteFromCloudinary = async (publicId) => {
+/**
+ * Temporary signed URL for viewing authenticated KYC assets (admin review / user preview).
+ */
+export const getSignedKycUrl = (publicId, options = {}) => {
+  if (!publicId) return null;
+
+  const expiresAt =
+    options.expiresAt ||
+    Math.floor(Date.now() / 1000) + (options.ttlSeconds || 60 * 60);
+
+  const resourceType = options.resourceType || 'image';
+
+  return cloudinary.url(publicId, {
+    type: 'authenticated',
+    resource_type: resourceType,
+    sign_url: true,
+    secure: true,
+    expires_at: expiresAt
+  });
+};
+
+/**
+ * Validate that a publicId belongs to this user's KYC uploads.
+ */
+export const isOwnedKycPublicId = (publicId, userId) => {
+  if (!publicId || !userId) return false;
+  const expectedPrefix = `kyc-documents/${String(userId)}_`;
+  return String(publicId).startsWith(expectedPrefix);
+};
+
+/**
+ * Extract Cloudinary public_id from a delivery URL when possible.
+ */
+export const extractPublicIdFromUrl = (url) => {
+  if (!url) return null;
   try {
-    const result = await cloudinary.uploader.destroy(publicId);
+    // Matches .../authenticated/s--xxx--/v123/kyc-documents/userid_ts_name.ext
+    // or .../image/upload/v123/kyc-documents/...
+    const match = String(url).match(
+      /\/(?:authenticated|upload)\/(?:s--[^/]+--\/)?(?:v\d+\/)?(.+?)(?:\.[a-zA-Z0-9]+)?$/
+    );
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+export const deleteFromCloudinary = async (publicId, resourceType = 'image') => {
+  try {
+    const result = await cloudinary.uploader.destroy(publicId, {
+      type: 'authenticated',
+      resource_type: resourceType
+    });
     logger.info('🗑️ File deleted from Cloudinary', { publicId, result });
     return result;
   } catch (error) {
@@ -81,10 +136,11 @@ export const deleteFromCloudinary = async (publicId) => {
   }
 };
 
-// Helper function to get file info from Cloudinary
 export const getCloudinaryFileInfo = async (publicId) => {
   try {
-    const result = await cloudinary.api.resource(publicId);
+    const result = await cloudinary.api.resource(publicId, {
+      type: 'authenticated'
+    });
     return result;
   } catch (error) {
     logger.error('❌ Error getting file info from Cloudinary:', error);

@@ -352,3 +352,93 @@ The ${brand.name} Team`;
 }
 
 export { brand, formatMoney, formatDate };
+
+export function kycApprovedEmail({ firstName }) {
+  const subject = 'KYC Approved — Full Access Enabled';
+  const html = layout({
+    title: 'KYC Approved',
+    preheader: 'Your identity verification was approved.',
+    greetingName: firstName,
+    bodyHtml: `
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#d0d0d0;">
+        Your KYC application has been approved. You can now deposit, withdraw, and trade on the platform.
+      </p>
+    `,
+    ctaLabel: 'Go to Dashboard',
+    ctaUrl: brand.dashboardUrl,
+  });
+  const text = `Dear ${firstName || 'Valued Client'},
+
+Your KYC application has been approved. You can now deposit, withdraw, and trade on the platform.
+
+Dashboard: ${brand.dashboardUrl}
+
+Kind regards,
+The ${brand.name} Team`;
+  return { subject, html, text };
+}
+
+export function kycRejectedEmail({ firstName, rejectionReason }) {
+  const subject = 'KYC Application Rejected';
+  const reason = rejectionReason || 'Please review your documents and resubmit.';
+  const html = layout({
+    title: 'KYC Rejected',
+    preheader: 'Your KYC application needs attention.',
+    greetingName: firstName,
+    bodyHtml: `
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#d0d0d0;">
+        Unfortunately we could not approve your KYC application.
+      </p>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#d0d0d0;">
+        <strong style="color:#f0f0f0;">Reason:</strong> ${escapeHtml(reason)}
+      </p>
+      <p style="margin:0;font-size:15px;line-height:1.6;color:#d0d0d0;">
+        Please correct the issues and resubmit your documents.
+      </p>
+    `,
+    ctaLabel: 'Resubmit KYC',
+    ctaUrl: `${brand.dashboardUrl}/kyc`,
+  });
+  const text = `Dear ${firstName || 'Valued Client'},
+
+Unfortunately we could not approve your KYC application.
+
+Reason: ${reason}
+
+Please correct the issues and resubmit: ${brand.dashboardUrl}/kyc
+
+Kind regards,
+The ${brand.name} Team`;
+  return { subject, html, text };
+}
+
+export function kycResubmissionEmail({ firstName, notes }) {
+  const subject = 'KYC Resubmission Required';
+  const detail = notes || 'Please update your documents and resubmit.';
+  const html = layout({
+    title: 'KYC Resubmission Required',
+    preheader: 'Additional information is needed for your KYC.',
+    greetingName: firstName,
+    bodyHtml: `
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#d0d0d0;">
+        We need you to resubmit your KYC application with corrections.
+      </p>
+      <p style="margin:0;font-size:15px;line-height:1.6;color:#d0d0d0;">
+        <strong style="color:#f0f0f0;">Notes:</strong> ${escapeHtml(detail)}
+      </p>
+    `,
+    ctaLabel: 'Update KYC',
+    ctaUrl: `${brand.dashboardUrl}/kyc`,
+  });
+  const text = `Dear ${firstName || 'Valued Client'},
+
+We need you to resubmit your KYC application with corrections.
+
+Notes: ${detail}
+
+Update KYC: ${brand.dashboardUrl}/kyc
+
+Kind regards,
+The ${brand.name} Team`;
+  return { subject, html, text };
+}

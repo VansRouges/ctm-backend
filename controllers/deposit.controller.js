@@ -14,6 +14,16 @@ class DepositController {
     try {
         const { userId } = req.params;
 
+        const isAdmin = Boolean(req.admin);
+        const isSelf =
+          Boolean(req.user?.userId) && String(req.user.userId) === String(userId);
+        if (!isAdmin && !isSelf) {
+          return res.status(403).json({
+            success: false,
+            message: 'You can only view your own deposits'
+          });
+        }
+
         const validation = await validateUserExists(userId);
         if (!validation.ok) {
           return res.status(validation.status).json({ success: false, message: validation.message });
@@ -84,19 +94,29 @@ class DepositController {
   // Create new deposit
   static async createDeposit(req, res) {
     try {
-      const { token_name, amount, token_deposit_address, user, status } = req.body;
+      const { token_name, amount, token_deposit_address, status } = req.body;
+      const user = req.user?.userId;
 
-      // Validate required fields
-      if (!token_name || !amount || !user) {
-        return res.status(400).json({
+      if (!user) {
+        return res.status(401).json({
           success: false,
-          message: 'Required fields: token_name, amount, user'
+          message: 'User authentication required'
         });
       }
 
-      const validation = await validateBodyUser(user);
-      if (!validation.ok) {
-        return res.status(validation.status).json({ success: false, message: validation.message });
+      // Prevent creating deposits for another user via body.user
+      if (req.body.user && String(req.body.user) !== String(user)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Cannot create a deposit for another user'
+        });
+      }
+
+      if (!token_name || !amount) {
+        return res.status(400).json({
+          success: false,
+          message: 'Required fields: token_name, amount'
+        });
       }
 
       const deposit = new Transaction({
@@ -111,7 +131,6 @@ class DepositController {
 
       const savedDeposit = await deposit.save();
 
-      // Create notification for admin
       await createNotification({
         action: 'deposit',
         userId: user,
@@ -122,7 +141,6 @@ class DepositController {
         }
       });
 
-      // User confirmation email (non-blocking)
       notifyDepositSubmitted(user, savedDeposit).catch(() => {});
 
       res.status(201).json({

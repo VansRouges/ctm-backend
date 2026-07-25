@@ -15,6 +15,16 @@ class WithdrawController {
     try {
       const { userId } = req.params;
 
+      const isAdmin = Boolean(req.admin);
+      const isSelf =
+        Boolean(req.user?.userId) && String(req.user.userId) === String(userId);
+      if (!isAdmin && !isSelf) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only view your own withdrawals'
+        });
+      }
+
       const validation = await validateUserExists(userId);
       if (!validation.ok) {
         return res.status(validation.status).json({ success: false, message: validation.message });
@@ -119,25 +129,34 @@ class WithdrawController {
   // Create new withdraw
   static async createWithdraw(req, res) {
     try {
-      const { token_name, amount, token_withdraw_address, user, status } = req.body;
+      const { token_name, amount, token_withdraw_address, status } = req.body;
+      const user = req.user?.userId;
 
-      // Validate required fields
-      if (!token_name || !amount || !user) {
-        return res.status(400).json({
+      if (!user) {
+        return res.status(401).json({
           success: false,
-          message: 'Required fields: token_name, amount, user_id'
+          message: 'User authentication required'
         });
       }
 
-      const validation = await validateBodyUser(user);
-      if (!validation.ok) {
-        return res.status(validation.status).json({ success: false, message: validation.message });
+      if (req.body.user && String(req.body.user) !== String(user)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Cannot create a withdrawal for another user'
+        });
+      }
+
+      if (!token_name || !amount) {
+        return res.status(400).json({
+          success: false,
+          message: 'Required fields: token_name, amount'
+        });
       }
 
       // Check if user has sufficient balance before creating withdrawal request
       try {
         const balanceCheck = await WithdrawService.checkSufficientBalance(user, token_name, amount);
-        
+
         if (!balanceCheck.hasSufficientFunds) {
           logger.warn('⚠️ Insufficient balance for withdrawal request', {
             userId: user,
@@ -166,7 +185,6 @@ class WithdrawController {
             message: 'User not found'
           });
         }
-        // If price fetch fails, allow creation but log warning
         logger.warn('⚠️ Could not verify balance during withdrawal creation', {
           error: error.message,
           userId: user,
@@ -186,7 +204,6 @@ class WithdrawController {
 
       const withdraw = await Transaction.create(withdrawData);
 
-      // Create notification
       await createNotification({
         action: 'withdraw',
         userId: user,
@@ -199,7 +216,7 @@ class WithdrawController {
 
       // User confirmation email (non-blocking)
       notifyWithdrawalSubmitted(user, withdraw).catch(() => {});
-      
+
       res.status(201).json({
         success: true,
         message: 'Withdrawal request created successfully',
@@ -209,7 +226,7 @@ class WithdrawController {
       console.error('Error creating withdraw:', error);
       res.status(500).json({
         success: false,
-        message: 'Failed to create withdrawal request',
+        message: 'Failed to create withdrawal',
         error: error.message
       });
     }

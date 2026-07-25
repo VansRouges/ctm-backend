@@ -2,6 +2,7 @@ import { Router } from 'express';
 import StockPurchaseController from '../controllers/stock-purchase.controller.js';
 import { requireAdminAuth } from '../middlewares/auth.middleware.js';
 import { requireUserAuth } from '../middlewares/user-auth.middleware.js';
+import { requireKycApproved } from '../middlewares/kyc.middleware.js';
 
 const router = Router();
 
@@ -12,9 +13,9 @@ router.put('/:id/settle-liquidation', requireAdminAuth, StockPurchaseController.
 router.put('/:id/reject', requireAdminAuth, StockPurchaseController.rejectStockPurchase);
 
 // User endpoints
-router.post('/', requireUserAuth, StockPurchaseController.createStockPurchase);
+router.post('/', requireUserAuth, requireKycApproved, StockPurchaseController.createStockPurchase);
 router.get('/my-purchases', requireUserAuth, StockPurchaseController.getMyStockPurchases);
 router.get('/:id', requireUserAuth, StockPurchaseController.getStockPurchaseById);
-router.post('/:id/request-liquidation', requireUserAuth, StockPurchaseController.requestLiquidation);
+router.post('/:id/request-liquidation', requireUserAuth, requireKycApproved, StockPurchaseController.requestLiquidation);
 
 export default router;

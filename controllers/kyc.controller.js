@@ -3,27 +3,69 @@ import User from '../model/user.model.js';
 import logger from '../utils/logger.js';
 import { createNotification } from '../utils/notificationHelper.js';
 import { createAuditLog } from '../utils/auditHelper.js';
+import {
+  getSignedKycUrl,
+  isOwnedKycPublicId,
+  extractPublicIdFromUrl,
+  deleteFromCloudinary
+} from '../config/cloudinary.js';
+import {
+  notifyKycApproved,
+  notifyKycRejected,
+  notifyKycResubmissionRequired
+} from '../utils/emailService.js';
 
-// Helper function to extract file key from Cloudinary URL
-const extractFileKeyFromUrl = (url) => {
-  try {
-    const matches = url.match(/\/v\d+\/(.+?)(?:\.|$)/);
-    return matches ? matches[1] : null;
-  } catch (error) {
-    logger.error('Error extracting file key from URL', { url, error: error.message });
-    return null;
+function resolveOwnedPublicId({ publicId, url }, userId) {
+  if (publicId && isOwnedKycPublicId(publicId, userId)) {
+    return publicId;
   }
-};
+  const fromUrl = extractPublicIdFromUrl(url);
+  if (fromUrl && isOwnedKycPublicId(fromUrl, userId)) {
+    return fromUrl;
+  }
+  return null;
+}
 
-// Helper function to delete KYC document from Cloudinary
-const deleteKYCDocument = async (fileKey) => {
+function withSignedDocumentUrls(kycDoc) {
+  const kyc = kycDoc.toObject ? kycDoc.toObject({ virtuals: true }) : { ...kycDoc };
+
+  if (kyc.documents?.validId) {
+    const publicId =
+      kyc.documents.validId.publicId ||
+      extractPublicIdFromUrl(kyc.documents.validId.fileUrl);
+    if (publicId) {
+      kyc.documents.validId.publicId = publicId;
+      kyc.documents.validId.fileUrl = getSignedKycUrl(publicId, {
+        resourceType: kyc.documents.validId.resourceType || 'image',
+        ttlSeconds: 60 * 60
+      });
+    }
+  }
+
+  if (kyc.documents?.passport) {
+    const publicId =
+      kyc.documents.passport.publicId ||
+      extractPublicIdFromUrl(kyc.documents.passport.fileUrl);
+    if (publicId) {
+      kyc.documents.passport.publicId = publicId;
+      kyc.documents.passport.fileUrl = getSignedKycUrl(publicId, {
+        resourceType: kyc.documents.passport.resourceType || 'image',
+        ttlSeconds: 60 * 60
+      });
+    }
+  }
+
+  return kyc;
+}
+
+// Helper kept for legacy cleanup attempts
+const deleteKYCDocument = async (publicId, resourceType = 'image') => {
   try {
-    // Note: Implement Cloudinary deletion logic here if needed
-    // Example: await cloudinary.uploader.destroy(fileKey);
-    logger.info('Document deletion attempted', { fileKey });
+    if (!publicId) return false;
+    await deleteFromCloudinary(publicId, resourceType);
     return true;
   } catch (error) {
-    logger.error('Error deleting KYC document', { fileKey, error: error.message });
+    logger.error('Error deleting KYC document', { publicId, error: error.message });
     return false;
   }
 };
@@ -39,10 +81,14 @@ export const submitKYC = async (req, res) => {
       address,
       validIdUrl,
       passportUrl,
+      validIdPublicId,
+      passportPublicId,
       validIdFileName,
       passportFileName,
       validIdFileSize,
-      passportFileSize
+      passportFileSize,
+      validIdResourceType,
+      passportResourceType
     } = req.body;
 
     logger.info('🔍 KYC submission attempt', {
@@ -86,42 +132,56 @@ export const submitKYC = async (req, res) => {
       });
     }
 
-    // Validate document URLs (uploaded via Cloudinary)
-    if (!validIdUrl || !passportUrl) {
-      logger.warn('❌ KYC validation failed - missing document URLs', {
+    // Validate documents were uploaded (publicId preferred; URL accepted for legacy clients)
+    if ((!validIdUrl && !validIdPublicId) || (!passportUrl && !passportPublicId)) {
+      logger.warn('❌ KYC validation failed - missing documents', {
         userId,
         hasValidIdUrl: !!validIdUrl,
-        hasPassportUrl: !!passportUrl
+        hasPassportUrl: !!passportUrl,
+        hasValidIdPublicId: !!validIdPublicId,
+        hasPassportPublicId: !!passportPublicId
       });
 
       return res.status(400).json({
         success: false,
-        message: 'Both valid ID and passport document URLs are required. Please upload documents first.'
+        message: 'Both valid ID and passport documents are required. Please upload documents first.'
       });
     }
 
-    // Validate Cloudinary URLs
-    const validIdUrlPattern = /^https:\/\/res\.cloudinary\.com\/.+/;
-    const passportUrlPattern = /^https:\/\/res\.cloudinary\.com\/.+/;
+    const ownedValidIdPublicId = resolveOwnedPublicId(
+      { publicId: validIdPublicId, url: validIdUrl },
+      userId
+    );
+    const ownedPassportPublicId = resolveOwnedPublicId(
+      { publicId: passportPublicId, url: passportUrl },
+      userId
+    );
 
-    if (!validIdUrlPattern.test(validIdUrl) || !passportUrlPattern.test(passportUrl)) {
-      logger.warn('❌ KYC validation failed - invalid document URLs', {
+    if (!ownedValidIdPublicId || !ownedPassportPublicId) {
+      logger.warn('❌ KYC validation failed - document publicIds not owned by user', {
         userId,
-        validIdUrl: validIdUrl?.substring(0, 50),
-        passportUrl: passportUrl?.substring(0, 50)
+        hasValidIdPublicId: !!ownedValidIdPublicId,
+        hasPassportPublicId: !!ownedPassportPublicId
       });
 
       return res.status(400).json({
         success: false,
-        message: 'Invalid document URLs. Please ensure files are uploaded through the proper upload service.'
+        message:
+          'Invalid document references. Please re-upload both documents through the KYC upload service.'
       });
     }
 
-    // Check if user already has KYC
     const existingKYC = await KYC.findOne({ userId });
     
     if (existingKYC && !existingKYC.canResubmit()) {
-      logger.warn('❌ KYC submission blocked - already exists or max resubmissions reached', {
+      const message =
+        existingKYC.status === 'approved'
+          ? 'KYC already approved'
+          : ['pending', 'under_review'].includes(existingKYC.status)
+            ? 'KYC already submitted and is awaiting review'
+            : 'Maximum resubmission limit reached';
+
+      logger.warn('❌ KYC submission blocked', {
         userId,
         existingStatus: existingKYC.status,
         resubmissionCount: existingKYC.resubmissionCount
@@ -129,19 +189,25 @@ export const submitKYC = async (req, res) => {
 
       return res.status(409).json({
         success: false,
-        message: existingKYC.status === 'approved' 
-          ? 'KYC already approved'
-          : 'Maximum resubmission limit reached'
+        message
       });
     }
 
-    logger.info('📝 Processing KYC submission with Cloudinary URLs', {
+    logger.info('📝 Processing KYC submission with private Cloudinary assets', {
       userId,
-      validIdUrl: validIdUrl.substring(0, 50) + '...',
-      passportUrl: passportUrl.substring(0, 50) + '...'
+      validIdPublicId: ownedValidIdPublicId,
+      passportPublicId: ownedPassportPublicId
     });
 
-    // Prepare KYC data
+    const signedValidIdUrl = getSignedKycUrl(ownedValidIdPublicId, {
+      resourceType: validIdResourceType || 'image',
+      ttlSeconds: 60 * 60
+    });
+    const signedPassportUrl = getSignedKycUrl(ownedPassportPublicId, {
+      resourceType: passportResourceType || 'image',
+      ttlSeconds: 60 * 60
+    });
+
     const kycData = {
       userId,
       fullName: fullName.trim(),
@@ -157,37 +223,47 @@ export const submitKYC = async (req, res) => {
       documents: {
         validId: {
           fileName: validIdFileName || 'valid-id-document',
-          fileUrl: validIdUrl,
+          fileUrl: signedValidIdUrl || ownedValidIdPublicId,
+          publicId: ownedValidIdPublicId,
+          resourceType: validIdResourceType || 'image',
           fileSize: parseInt(validIdFileSize) || 0,
           uploadedAt: new Date()
         },
         passport: {
           fileName: passportFileName || 'passport-document',
-          fileUrl: passportUrl,
+          fileUrl: signedPassportUrl || ownedPassportPublicId,
+          publicId: ownedPassportPublicId,
+          resourceType: passportResourceType || 'image',
           fileSize: parseInt(passportFileSize) || 0,
           uploadedAt: new Date()
         }
       },
       status: 'pending',
       submittedAt: new Date(),
+      rejectionReason: undefined,
+      reviewNotes: undefined,
+      reviewedBy: null,
+      reviewedAt: null,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent')
     };
 
-    // Create or update KYC
     let kyc;
     if (existingKYC) {
-      // Delete old documents if resubmitting
-      if (existingKYC.documents?.validId?.fileUrl) {
-        const oldValidIdKey = extractFileKeyFromUrl(existingKYC.documents.validId.fileUrl);
-        if (oldValidIdKey) await deleteKYCDocument(oldValidIdKey);
+      if (existingKYC.documents?.validId?.publicId) {
+        await deleteKYCDocument(
+          existingKYC.documents.validId.publicId,
+          existingKYC.documents.validId.resourceType || 'image'
+        );
       }
-      if (existingKYC.documents?.passport?.fileUrl) {
-        const oldPassportKey = extractFileKeyFromUrl(existingKYC.documents.passport.fileUrl);
-        if (oldPassportKey) await deleteKYCDocument(oldPassportKey);
+      if (existingKYC.documents?.passport?.publicId) {
+        await deleteKYCDocument(
+          existingKYC.documents.passport.publicId,
+          existingKYC.documents.passport.resourceType || 'image'
+        );
       }
 
-      // Update existing KYC
+      kycData.resubmissionCount = (existingKYC.resubmissionCount || 0) + 1;
       Object.assign(existingKYC, kycData);
       kyc = await existingKYC.save();
       
@@ -197,7 +273,6 @@ export const submitKYC = async (req, res) => {
         resubmissionCount: kyc.resubmissionCount
       });
     } else {
-      // Create new KYC
       kyc = new KYC(kycData);
       await kyc.save();
       
@@ -207,7 +282,8 @@ export const submitKYC = async (req, res) => {
       });
     }
 
-    // Create notification for admin
+    await User.findByIdAndUpdate(userId, { kycStatus: false });
+
     await createNotification({
       action: 'kyc_submitted',
       description: `User ${req.user.email || 'Unknown'} submitted KYC application for review`,
@@ -220,7 +296,7 @@ export const submitKYC = async (req, res) => {
           submissionType: existingKYC ? 'resubmission' : 'new_submission',
           submissionTime: new Date().toISOString(),
           documentCount: 2,
-          uploadMethod: 'cloudinary'
+          uploadMethod: 'cloudinary_authenticated'
         }
       }
     });
@@ -231,7 +307,6 @@ export const submitKYC = async (req, res) => {
       status: kyc.status
     });
 
-    // Return success response (without sensitive document URLs)
     res.status(201).json({
       success: true,
       message: existingKYC ? 'KYC resubmitted successfully' : 'KYC submitted successfully',
@@ -425,7 +500,7 @@ export const getKYCById = async (req, res) => {
 
     res.json({
       success: true,
-      kyc
+      kyc: withSignedDocumentUrls(kyc)
     });
 
   } catch (error) {
@@ -457,6 +532,16 @@ export const updateKYCStatus = async (req, res) => {
       });
     }
 
+    if (status === 'rejected') {
+      const reason = typeof rejectionReason === 'string' ? rejectionReason.trim() : '';
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message: 'rejectionReason is required when rejecting a KYC application'
+        });
+      }
+    }
+
     const kyc = await KYC.findById(id).populate('userId', 'email firstName lastName');
 
     if (!kyc) {
@@ -468,7 +553,6 @@ export const updateKYCStatus = async (req, res) => {
 
     const oldStatus = kyc.status;
 
-    // Update KYC status
     kyc.status = status;
     kyc.reviewedBy = req.admin.id;
     kyc.reviewedAt = new Date();
@@ -477,13 +561,16 @@ export const updateKYCStatus = async (req, res) => {
       kyc.reviewNotes = reviewNotes.trim();
     }
     
-    if (status === 'rejected' && rejectionReason) {
+    if (status === 'rejected') {
+      kyc.rejectionReason = rejectionReason.trim();
+    }
+
+    if (status === 'resubmission_required' && !kyc.rejectionReason && rejectionReason) {
       kyc.rejectionReason = rejectionReason.trim();
     }
 
     await kyc.save();
 
-    // Sync user's kycStatus field with KYC approval status
     const userKycStatus = status === 'approved';
     await User.findByIdAndUpdate(
       kyc.userId._id,
@@ -497,18 +584,18 @@ export const updateKYCStatus = async (req, res) => {
       kycRecordStatus: status
     });
 
-    // Send notification to user about KYC status change
     if (status === 'approved') {
       await createNotification({
         action: 'kyc_approved',
         userId: kyc.userId._id,
-        description: 'Your KYC application has been approved. You now have full access to all platform features.',
+        description: 'Your KYC application has been approved. You now have full access to deposits, withdrawals, and trading.',
         metadata: {
           kycId: kyc._id,
           approvedAt: kyc.reviewedAt,
           userEmail: kyc.userId.email
         }
       });
+      notifyKycApproved(kyc.userId._id, kyc).catch(() => {});
     } else if (status === 'rejected') {
       await createNotification({
         action: 'kyc_rejected',
@@ -521,6 +608,7 @@ export const updateKYCStatus = async (req, res) => {
           userEmail: kyc.userId.email
         }
       });
+      notifyKycRejected(kyc.userId._id, kyc, rejectionReason).catch(() => {});
     } else if (status === 'resubmission_required') {
       await createNotification({
         action: 'kyc_resubmission_required',
@@ -532,6 +620,7 @@ export const updateKYCStatus = async (req, res) => {
           userEmail: kyc.userId.email
         }
       });
+      notifyKycResubmissionRequired(kyc.userId._id, kyc, reviewNotes || rejectionReason).catch(() => {});
     }
 
     // Create audit log
@@ -597,11 +686,23 @@ export const deleteKYC = async (req, res) => {
       });
     }
 
-    // Delete documents from Cloudinary (optional - files can be kept for audit purposes)
-    // Note: Cloudinary files will be automatically cleaned up or can be manually deleted from dashboard
-    
-    // Delete KYC record
+    // Delete Cloudinary assets when possible
+    if (kyc.documents?.validId?.publicId) {
+      await deleteKYCDocument(
+        kyc.documents.validId.publicId,
+        kyc.documents.validId.resourceType || 'image'
+      );
+    }
+    if (kyc.documents?.passport?.publicId) {
+      await deleteKYCDocument(
+        kyc.documents.passport.publicId,
+        kyc.documents.passport.resourceType || 'image'
+      );
+    }
+
     await KYC.findByIdAndDelete(id);
+
+    await User.findByIdAndUpdate(kyc.userId._id, { kycStatus: false });
 
     await createAuditLog(req, res, {
       action: 'kyc_application_deleted',
@@ -611,7 +712,7 @@ export const deleteKYC = async (req, res) => {
       changes: {
         deletedKycStatus: kyc.status,
         userId: kyc.userId._id,
-        documentsDeleted: 0 // Documents kept in Cloudinary for audit purposes
+        kycStatusReset: true
       }
     });
 

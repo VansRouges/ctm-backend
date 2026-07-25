@@ -71,6 +71,15 @@ const kycSchema = new mongoose.Schema({
         type: String,
         required: true
       },
+      publicId: {
+        type: String,
+        trim: true
+      },
+      resourceType: {
+        type: String,
+        trim: true,
+        default: 'image'
+      },
       fileSize: {
         type: Number,
         required: true
@@ -88,6 +97,15 @@ const kycSchema = new mongoose.Schema({
       fileUrl: {
         type: String,
         required: true
+      },
+      publicId: {
+        type: String,
+        trim: true
+      },
+      resourceType: {
+        type: String,
+        trim: true,
+        default: 'image'
       },
       fileSize: {
         type: Number,

@@ -6,6 +6,9 @@ import {
   stockPurchaseSubmittedEmail,
   copytradePurchaseSubmittedEmail,
   copytradeCompletedEmail,
+  kycApprovedEmail,
+  kycRejectedEmail,
+  kycResubmissionEmail,
 } from './emailTemplates.js';
 
 const RESEND_API_URL = 'https://api.resend.com/emails';
@@ -187,5 +190,44 @@ export async function notifyCopytradeCompleted(userId, purchase, { finalValue, r
     return sendEmail({ to: contact.email, ...content });
   } catch (error) {
     logger.error('📧 notifyCopytradeCompleted failed', { error: error.message, userId });
+  }
+}
+
+export async function notifyKycApproved(userId) {
+  try {
+    const contact = await getUserContact(userId);
+    if (!contact) return;
+    const content = kycApprovedEmail({ firstName: contact.firstName });
+    return sendEmail({ to: contact.email, ...content });
+  } catch (error) {
+    logger.error('📧 notifyKycApproved failed', { error: error.message, userId });
+  }
+}
+
+export async function notifyKycRejected(userId, _kyc, rejectionReason) {
+  try {
+    const contact = await getUserContact(userId);
+    if (!contact) return;
+    const content = kycRejectedEmail({
+      firstName: contact.firstName,
+      rejectionReason,
+    });
+    return sendEmail({ to: contact.email, ...content });
+  } catch (error) {
+    logger.error('📧 notifyKycRejected failed', { error: error.message, userId });
+  }
+}
+
+export async function notifyKycResubmissionRequired(userId, _kyc, notes) {
+  try {
+    const contact = await getUserContact(userId);
+    if (!contact) return;
+    const content = kycResubmissionEmail({
+      firstName: contact.firstName,
+      notes,
+    });
+    return sendEmail({ to: contact.email, ...content });
+  } catch (error) {
+    logger.error('📧 notifyKycResubmissionRequired failed', { error: error.message, userId });
   }
 }

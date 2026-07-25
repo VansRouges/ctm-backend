@@ -54,6 +54,16 @@ const getUsers = async (req, res, next) => {
 const getUserById = async (req, res, next) => {
   try {
     const userId = req.params.id;
+    const isAdmin = Boolean(req.admin);
+    const isSelf =
+      Boolean(req.user?.userId) && String(req.user.userId) === String(userId);
+
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only view your own profile'
+      });
+    }
 
     try {
       await FinancialSummaryService.syncUserFinancialMetrics(userId);
@@ -150,41 +160,79 @@ const createUser = async (req, res, next) => {
   }
 };
 
-// Update user
+// Update user — auth + field allowlists (no mass-assignment)
 const updateUser = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const isAdmin = Boolean(req.admin);
+    const isSelf =
+      Boolean(req.user?.userId) && String(req.user.userId) === String(id);
+
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only update your own profile'
+      });
+    }
+
+    const ADMIN_ALLOWED = [
+      'username',
+      'firstName',
+      'lastName',
+      'email',
+      'isActive',
+      'accountStatus',
+      'totalInvestment',
+      'accountBalance',
+      'roi'
+    ];
+    const USER_ALLOWED = ['username', 'firstName', 'lastName'];
+    const allowed = isAdmin ? ADMIN_ALLOWED : USER_ALLOWED;
+
+    // KYC must go through /kyc/admin/:id/status — never via user update
+    if (Object.prototype.hasOwnProperty.call(req.body, 'kycStatus')) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'kycStatus cannot be set here. Approve or reject KYC via the KYC admin endpoints.'
+      });
+    }
+
+    const updates = {};
+    for (const key of allowed) {
+      if (Object.prototype.hasOwnProperty.call(req.body, key)) {
+        updates[key] = req.body[key];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: `No valid fields to update. Allowed: ${allowed.join(', ')}`
+      });
+    }
 
     logger.info('📝 Updating user', {
       userId: id,
       adminUsername: req.admin?.username,
-      updates: Object.keys(req.body)
+      selfUpdate: isSelf,
+      updates: Object.keys(updates)
     });
 
-    // Get old user data before update
     const oldUser = await User.findById(id);
-    
+
     if (!oldUser) {
-      logger.warn('⚠️ User not found for update', {
-        userId: id,
-        adminUsername: req.admin?.username
-      });
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    const user = await User.findByIdAndUpdate(
-      id,
-      req.body,
-      {
-        new: true, // Return updated document
-        runValidators: true // Run schema validators
-      }
-    );
+    const user = await User.findByIdAndUpdate(id, updates, {
+      new: true,
+      runValidators: true
+    });
 
-    // Create audit log
     await createAuditLog(req, res, {
       action: 'user_updated',
       resourceType: 'user',
@@ -197,7 +245,6 @@ const updateUser = async (req, res, next) => {
       description: `Updated user: ${user.email}`
     });
 
-    // Invalidate audit cache
     await invalidateAuditCache();
 
     logger.info('✅ User updated successfully', {

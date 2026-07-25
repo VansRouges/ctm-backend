@@ -7,16 +7,15 @@ import {
   deleteUser
 } from '../controllers/user.controller.js';
 import { requireAdminAuth } from '../middlewares/auth.middleware.js';
+import { requireUserOrAdminAuth } from '../middlewares/user-or-admin-auth.middleware.js';
 
 const userRouter = express.Router();
 
-// General routes
-userRouter.get('/', requireAdminAuth, getUsers);  // Admin only - get all users
-userRouter.post('/', createUser);
+userRouter.get('/', requireAdminAuth, getUsers);
+userRouter.post('/', requireAdminAuth, createUser);
 
-// ID-based routes last
-userRouter.get('/:id', getUserById);
-userRouter.put('/:id', updateUser);
-userRouter.delete('/:id', requireAdminAuth, deleteUser);  // Admin only - delete user
+userRouter.get('/:id', requireUserOrAdminAuth, getUserById);
+userRouter.put('/:id', requireUserOrAdminAuth, updateUser);
+userRouter.delete('/:id', requireAdminAuth, deleteUser);
 
 export default userRouter;
