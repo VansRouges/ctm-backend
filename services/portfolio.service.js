@@ -342,6 +342,157 @@ class PortfolioService {
   }
 
   /**
+   * Adjust liquid portfolio so mark-to-market available USD ≈ targetAvailable.
+   * Increases are credited as USDT (1:1). Decreases prefer USDT, then highest-value tokens.
+   * Does not change totalInvestment or locked trade capital.
+   *
+   * @param {String} userId
+   * @param {Number} targetAvailable - Desired available USD (>= 0)
+   * @param {Number} currentAvailable - Current available USD
+   * @param {Object} session
+   * @returns {Object} - { delta, adjustments }
+   */
+  static async adjustAvailableToTarget(
+    userId,
+    targetAvailable,
+    currentAvailable,
+    session = null
+  ) {
+    const target = Number(Number(targetAvailable).toFixed(8));
+    const current = Number(Number(currentAvailable).toFixed(8));
+    const delta = Number((target - current).toFixed(8));
+    const adjustments = [];
+
+    if (Math.abs(delta) < 0.00000001) {
+      return { delta: 0, adjustments };
+    }
+
+    if (delta > 0) {
+      // Credit as USDT at 1:1 so sync yields the target available balance
+      await this.addToPortfolio(userId, 'USDT', delta, delta, session);
+      adjustments.push({
+        action: 'add',
+        tokenName: 'USDT',
+        tokenAmount: delta,
+        usdValue: delta
+      });
+      return { delta, adjustments };
+    }
+
+    // Decrease: deduct |delta| USD from holdings (USDT first, then highest value)
+    let remainingToDeduct = Number(Math.abs(delta).toFixed(8));
+
+    const portfolioEntries = await Portfolio.find({ user: userId }).session(session);
+    if (portfolioEntries.length === 0) {
+      const error = new Error('INSUFFICIENT_PORTFOLIO_VALUE');
+      error.data = {
+        required: remainingToDeduct,
+        available: 0,
+        deficit: remainingToDeduct
+      };
+      throw error;
+    }
+
+    const entriesWithValues = await Promise.all(
+      portfolioEntries.map(async (entry) => {
+        const symbol = entry.token_name.toUpperCase();
+        if (symbol === 'USDT' || symbol === 'USDC' || symbol === 'BUSD') {
+          const currentValue = Number(entry.amount.toFixed(8));
+          return { entry, livePrice: 1, currentValue, preferFirst: true };
+        }
+        try {
+          const livePrice = await getTokenPrice(entry.token_name);
+          const currentValue = Number((entry.amount * livePrice).toFixed(8));
+          return { entry, livePrice, currentValue, preferFirst: false };
+        } catch (priceError) {
+          logger.warn('⚠️ Skipping token without live price during admin balance adjust', {
+            userId,
+            tokenName: entry.token_name,
+            error: priceError.message
+          });
+          return { entry, livePrice: null, currentValue: 0, preferFirst: false };
+        }
+      })
+    );
+
+    // Stablecoins first, then highest USD value
+    entriesWithValues.sort((a, b) => {
+      if (a.preferFirst !== b.preferFirst) return a.preferFirst ? -1 : 1;
+      return b.currentValue - a.currentValue;
+    });
+
+    const totalAvailable = entriesWithValues.reduce(
+      (sum, item) => sum + item.currentValue,
+      0
+    );
+    if (totalAvailable + 0.00000001 < remainingToDeduct) {
+      const error = new Error('INSUFFICIENT_PORTFOLIO_VALUE');
+      error.data = {
+        required: remainingToDeduct,
+        available: Number(totalAvailable.toFixed(8)),
+        deficit: Number((remainingToDeduct - totalAvailable).toFixed(8))
+      };
+      throw error;
+    }
+
+    for (const { entry, livePrice, currentValue } of entriesWithValues) {
+      if (remainingToDeduct <= 0) break;
+      if (!livePrice || currentValue <= 0) continue;
+
+      if (currentValue <= remainingToDeduct) {
+        await this.deductFromPortfolio(
+          userId,
+          entry.token_name,
+          entry.amount,
+          session
+        );
+        adjustments.push({
+          action: 'deduct',
+          tokenName: entry.token_name,
+          tokenAmount: entry.amount,
+          usdValue: currentValue
+        });
+        remainingToDeduct = Number((remainingToDeduct - currentValue).toFixed(8));
+      } else {
+        const tokenAmountToDeduct = Number((remainingToDeduct / livePrice).toFixed(8));
+        await this.deductFromPortfolio(
+          userId,
+          entry.token_name,
+          tokenAmountToDeduct,
+          session
+        );
+        adjustments.push({
+          action: 'deduct',
+          tokenName: entry.token_name,
+          tokenAmount: tokenAmountToDeduct,
+          usdValue: remainingToDeduct
+        });
+        remainingToDeduct = 0;
+      }
+    }
+
+    if (remainingToDeduct > 0.0001) {
+      const error = new Error('INSUFFICIENT_PORTFOLIO_VALUE');
+      error.data = {
+        required: Math.abs(delta),
+        available: Number((Math.abs(delta) - remainingToDeduct).toFixed(8)),
+        deficit: remainingToDeduct
+      };
+      throw error;
+    }
+
+    logger.info('📊 Adjusted portfolio available balance to target', {
+      userId,
+      targetAvailable: target,
+      previousAvailable: current,
+      delta,
+      adjustments
+    });
+
+    return { delta, adjustments };
+  }
+
+  /**
    * Recalculate and sync user's accountBalance + equity metrics (currentValue, ROI)
    * @param {String} userId - User ID
    * @param {Object} session - MongoDB session

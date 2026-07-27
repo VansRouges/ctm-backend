@@ -3,6 +3,7 @@ import { createNotification } from "../utils/notificationHelper.js";
 import { createAuditLog } from "../utils/auditHelper.js";
 import { invalidateAuditCache } from "./audit-log.controller.js";
 import FinancialSummaryService from "../services/financial-summary.service.js";
+import BalanceService from "../services/balance.service.js";
 import logger from "../utils/logger.js";
 
 // Get all users
@@ -175,6 +176,7 @@ const updateUser = async (req, res, next) => {
       });
     }
 
+    // accountBalance / currentValue are handled via BalanceService (portfolio-backed)
     const ADMIN_ALLOWED = [
       'username',
       'firstName',
@@ -184,6 +186,7 @@ const updateUser = async (req, res, next) => {
       'accountStatus',
       'totalInvestment',
       'accountBalance',
+      'currentValue',
       'roi'
     ];
     const USER_ALLOWED = ['username', 'firstName', 'lastName'];
@@ -198,14 +201,49 @@ const updateUser = async (req, res, next) => {
       });
     }
 
+    // Non-admins cannot touch financial fields even if sent
+    if (
+      !isAdmin &&
+      (Object.prototype.hasOwnProperty.call(req.body, 'accountBalance') ||
+        Object.prototype.hasOwnProperty.call(req.body, 'currentValue') ||
+        Object.prototype.hasOwnProperty.call(req.body, 'totalInvestment') ||
+        Object.prototype.hasOwnProperty.call(req.body, 'roi'))
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only admins can update financial fields'
+      });
+    }
+
+    const financialFields = {};
+    if (
+      isAdmin &&
+      Object.prototype.hasOwnProperty.call(req.body, 'accountBalance')
+    ) {
+      financialFields.accountBalance = req.body.accountBalance;
+    }
+    if (
+      isAdmin &&
+      Object.prototype.hasOwnProperty.call(req.body, 'currentValue')
+    ) {
+      financialFields.currentValue = req.body.currentValue;
+    }
+    const hasFinancialUpdate = Object.keys(financialFields).length > 0;
+
     const updates = {};
     for (const key of allowed) {
+      if (
+        key === 'accountBalance' ||
+        key === 'currentValue'
+      ) {
+        continue; // applied via BalanceService below
+      }
       if (Object.prototype.hasOwnProperty.call(req.body, key)) {
         updates[key] = req.body[key];
       }
     }
 
-    if (Object.keys(updates).length === 0) {
+    if (Object.keys(updates).length === 0 && !hasFinancialUpdate) {
       return res.status(400).json({
         success: false,
         message: `No valid fields to update. Allowed: ${allowed.join(', ')}`
@@ -216,7 +254,8 @@ const updateUser = async (req, res, next) => {
       userId: id,
       adminUsername: req.admin?.username,
       selfUpdate: isSelf,
-      updates: Object.keys(updates)
+      updates: Object.keys(updates),
+      financialFields: Object.keys(financialFields)
     });
 
     const oldUser = await User.findById(id);
@@ -228,21 +267,43 @@ const updateUser = async (req, res, next) => {
       });
     }
 
-    const user = await User.findByIdAndUpdate(id, updates, {
-      new: true,
-      runValidators: true
-    });
+    let financialResult = null;
+    if (hasFinancialUpdate) {
+      financialResult = await BalanceService.adminUpdateFinancialMetrics(
+        id,
+        financialFields
+      );
+      // ROI is recalculated by sync — drop manual roi if financials changed
+      delete updates.roi;
+    }
+
+    let user =
+      Object.keys(updates).length > 0
+        ? await User.findByIdAndUpdate(id, updates, {
+            new: true,
+            runValidators: true
+          })
+        : await User.findById(id);
 
     await createAuditLog(req, res, {
-      action: 'user_updated',
+      action: hasFinancialUpdate ? 'user_financials_updated' : 'user_updated',
       resourceType: 'user',
       resourceId: user._id.toString(),
       resourceName: user.email,
       changes: {
         before: oldUser.toObject(),
-        after: user.toObject()
+        after: user.toObject(),
+        ...(financialResult && {
+          financials: {
+            before: financialResult.before,
+            after: financialResult.after,
+            adjustments: financialResult.adjustments
+          }
+        })
       },
-      description: `Updated user: ${user.email}`
+      description: hasFinancialUpdate
+        ? `Updated financial metrics for user: ${user.email}`
+        : `Updated user: ${user.email}`
     });
 
     await invalidateAuditCache();
@@ -250,20 +311,49 @@ const updateUser = async (req, res, next) => {
     logger.info('✅ User updated successfully', {
       userId: id,
       adminUsername: req.admin?.username,
-      userEmail: user.email
+      userEmail: user.email,
+      financialUpdate: hasFinancialUpdate
     });
 
     res.json({
       success: true,
-      message: 'User updated successfully',
-      data: user
+      message: hasFinancialUpdate
+        ? 'User and financial metrics updated successfully'
+        : 'User updated successfully',
+      data: user,
+      ...(financialResult && {
+        financialSummary: financialResult.after,
+        portfolioAdjustments: financialResult.adjustments
+      })
     });
   } catch (error) {
     logger.error('❌ Error updating user', {
       error: error.message,
       userId: req.params.id,
-      adminId: req.admin?.id
+      adminId: req.admin?.id,
+      data: error.data
     });
+
+    const financialErrors = new Set([
+      'NO_FINANCIAL_FIELDS',
+      'INVALID_FINANCIAL_VALUE',
+      'CURRENT_VALUE_BELOW_BALANCE',
+      'CURRENT_VALUE_LOCKED_MISMATCH',
+      'CURRENT_VALUE_BELOW_LOCKED',
+      'INSUFFICIENT_PORTFOLIO_VALUE',
+      'USER_NOT_FOUND'
+    ]);
+
+    if (financialErrors.has(error.message)) {
+      const status = error.message === 'USER_NOT_FOUND' ? 404 : 400;
+      return res.status(status).json({
+        success: false,
+        message: error.data?.message || error.message,
+        error: error.message,
+        data: error.data || undefined
+      });
+    }
+
     res.status(400).json({
       success: false,
       message: 'Update Error',

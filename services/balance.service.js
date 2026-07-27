@@ -200,6 +200,165 @@ class BalanceService {
   }
 
   /**
+   * Admin: set accountBalance (available) and/or currentValue (total equity).
+   *
+   * Definitions:
+   * - accountBalance = liquid portfolio mark-to-market
+   * - currentValue = accountBalance + lockedValue (active copytrades/stocks)
+   *
+   * Persistence: adjusts USDT / holdings so FinancialSummary sync keeps the values.
+   * totalInvestment is never changed here.
+   *
+   * @param {String} userId
+   * @param {Object} fields
+   * @param {Number} [fields.accountBalance]
+   * @param {Number} [fields.currentValue]
+   * @param {Object} [session]
+   */
+  static async adminUpdateFinancialMetrics(
+    userId,
+    { accountBalance, currentValue } = {},
+    session = null
+  ) {
+    const hasBalance = accountBalance !== undefined && accountBalance !== null;
+    const hasCurrent = currentValue !== undefined && currentValue !== null;
+
+    if (!hasBalance && !hasCurrent) {
+      const error = new Error('NO_FINANCIAL_FIELDS');
+      error.data = {
+        message: 'Provide accountBalance and/or currentValue'
+      };
+      throw error;
+    }
+
+    const parseNonNegative = (value, fieldName) => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) {
+        const error = new Error('INVALID_FINANCIAL_VALUE');
+        error.data = {
+          field: fieldName,
+          value,
+          message: `${fieldName} must be a non-negative number`
+        };
+        throw error;
+      }
+      return Number(n.toFixed(8));
+    };
+
+    const requestedBalance = hasBalance
+      ? parseNonNegative(accountBalance, 'accountBalance')
+      : undefined;
+    const requestedCurrent = hasCurrent
+      ? parseNonNegative(currentValue, 'currentValue')
+      : undefined;
+
+    const before = await FinancialSummaryService.computeSummary(userId, session);
+    const lockedValue = before.lockedValue || 0;
+
+    let targetAvailable;
+
+    if (hasBalance && hasCurrent) {
+      if (requestedCurrent < requestedBalance) {
+        const error = new Error('CURRENT_VALUE_BELOW_BALANCE');
+        error.data = {
+          accountBalance: requestedBalance,
+          currentValue: requestedCurrent,
+          message: 'currentValue must be greater than or equal to accountBalance'
+        };
+        throw error;
+      }
+
+      const impliedLocked = Number(
+        (requestedCurrent - requestedBalance).toFixed(8)
+      );
+      // Locked capital comes from active trades/stocks — admin cannot invent it here
+      if (Math.abs(impliedLocked - lockedValue) > 0.01) {
+        const error = new Error('CURRENT_VALUE_LOCKED_MISMATCH');
+        error.data = {
+          accountBalance: requestedBalance,
+          currentValue: requestedCurrent,
+          lockedValue,
+          expectedCurrentValue: Number(
+            (requestedBalance + lockedValue).toFixed(8)
+          ),
+          message:
+            'currentValue must equal accountBalance + lockedValue. ' +
+            'Update accountBalance alone, or set currentValue to accountBalance + lockedValue. ' +
+            'To change locked capital, update active copytrade/stock values.'
+        };
+        throw error;
+      }
+      targetAvailable = requestedBalance;
+    } else if (hasBalance) {
+      targetAvailable = requestedBalance;
+    } else {
+      // currentValue only → available = currentValue - locked
+      targetAvailable = Number((requestedCurrent - lockedValue).toFixed(8));
+      if (targetAvailable < 0) {
+        const error = new Error('CURRENT_VALUE_BELOW_LOCKED');
+        error.data = {
+          currentValue: requestedCurrent,
+          lockedValue,
+          message:
+            'currentValue cannot be less than locked capital in active trades/stocks'
+        };
+        throw error;
+      }
+    }
+
+    const { delta, adjustments } = await PortfolioService.adjustAvailableToTarget(
+      userId,
+      targetAvailable,
+      before.accountBalance,
+      session
+    );
+
+    const after = await FinancialSummaryService.syncUserFinancialMetrics(
+      userId,
+      session
+    );
+
+    logger.info('✏️ Admin updated user financial metrics', {
+      userId,
+      requested: { accountBalance: requestedBalance, currentValue: requestedCurrent },
+      before: {
+        accountBalance: before.accountBalance,
+        currentValue: before.currentValue,
+        lockedValue: before.lockedValue
+      },
+      after: {
+        accountBalance: after.accountBalance,
+        currentValue: after.currentValue,
+        lockedValue: after.lockedValue,
+        roi: after.roi
+      },
+      delta,
+      adjustments
+    });
+
+    return {
+      before: {
+        accountBalance: before.accountBalance,
+        currentValue: before.currentValue,
+        lockedValue: before.lockedValue,
+        roi: before.roi
+      },
+      after: {
+        accountBalance: after.accountBalance,
+        currentValue: after.currentValue,
+        lockedValue: after.lockedValue,
+        lifetimeWithdrawals: after.lifetimeWithdrawals,
+        roi: after.roi,
+        netGainLoss: after.netGainLoss,
+        totalInvestment: after.totalInvestment
+      },
+      delta,
+      adjustments,
+      email: after.email
+    };
+  }
+
+  /**
    * Get user balance information
    */
   static async getBalance(userId) {
