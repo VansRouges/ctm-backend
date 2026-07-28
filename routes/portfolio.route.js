@@ -23,9 +23,7 @@ portfolioRouter.post('/validate-withdrawal', requireUserAuth, PortfolioControlle
 // GET /api/v1/portfolio/users - Admin: Get all users with their portfolio information
 portfolioRouter.get('/users', requireAdminAuth, PortfolioController.getAllUsersWithPortfolios);
 
-// GET /api/v1/portfolio/user/:userId - Admin: Get user's portfolio
-portfolioRouter.get('/user/:userId', requireAdminAuth, PortfolioController.getUserPortfolio);
-
+// Specific /user/:userId/* routes must be registered before /user/:userId
 // GET /api/v1/portfolio/user/:userId/financial-summary - Admin: equity summary
 portfolioRouter.get('/user/:userId/financial-summary', requireAdminAuth, PortfolioController.getUserFinancialSummary);
 
@@ -37,5 +35,8 @@ portfolioRouter.get('/user/:userId/available-tokens', requireAdminAuth, Portfoli
 
 // POST /api/v1/portfolio/user/:userId/recalculate - Admin: Recalculate balance + equity metrics
 portfolioRouter.post('/user/:userId/recalculate', requireAdminAuth, PortfolioController.recalculateBalance);
+
+// GET /api/v1/portfolio/user/:userId - Admin: Get user's portfolio
+portfolioRouter.get('/user/:userId', requireAdminAuth, PortfolioController.getUserPortfolio);
 
 export default portfolioRouter;
