@@ -228,9 +228,13 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
 ```json
 {
   "success": true,
-  "message": "Account balance recalculated successfully",
+  "message": "Account balance and equity metrics recalculated successfully",
   "data": {
-    "newBalance": 1542.39149572
+    "newBalance": 1542.39149572,
+    "accountBalance": 1542.39149572,
+    "currentValue": 4542.39149572,
+    "lockedValue": 3000,
+    "roi": 12.5
   }
 }
 ```
@@ -238,8 +242,9 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
 **What Happens:**
 1. System fetches all user's portfolio entries
 2. Fetches live prices for each token from CoinMarketCap
-3. Calculates `totalCurrentValue` from portfolio
-4. Updates user's `accountBalance` to match `totalCurrentValue`
+3. Calculates available (`accountBalance`) from portfolio
+4. Adds locked capital from active copytrades/stocks → `currentValue`
+5. Updates user's `accountBalance`, `currentValue`, and `roi`
 
 ---
 
@@ -252,6 +257,130 @@ Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
   "error": "Error message details"
 }
 ```
+
+---
+
+### 5. Update User Financial Metrics (accountBalance / currentValue)
+
+**Endpoint:** `PUT /api/v1/portfolio/user/:userId/financial`
+
+**Description:** Admin sets a user's **available balance** (`accountBalance`) and/or **total equity** (`currentValue`). Changes are applied by adjusting portfolio holdings (USDT credits / token deductions) so values **persist through financial sync** (they are not wiped on the next GET).
+
+**Definitions:**
+- `accountBalance` = liquid portfolio mark-to-market (available)
+- `lockedValue` = capital in active copytrades + active/pending-liquidation stocks
+- `currentValue` = `accountBalance + lockedValue`
+
+**Authentication:** Required (Admin JWT Token)
+
+**URL Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `userId` | String | User's MongoDB ObjectId |
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `accountBalance` | Number | No* | Target available USD (>= 0) |
+| `currentValue` | Number | No* | Target total equity USD (>= 0) |
+
+\* At least one field is required.
+
+**Rules:**
+1. Providing only `accountBalance` adjusts liquid holdings; `currentValue` becomes `accountBalance + lockedValue`.
+2. Providing only `currentValue` sets available to `currentValue - lockedValue` (must be >= 0).
+3. Providing both requires `currentValue === accountBalance + lockedValue` (within $0.01). To change locked capital, update active copytrade/stock values separately.
+4. Increases are credited as USDT. Decreases prefer USDT/stablecoins, then highest-value tokens.
+5. Does **not** change `totalInvestment`.
+
+---
+
+#### Example Request
+
+```json
+PUT /api/v1/portfolio/user/68f02408d173966c99f2db7f/financial
+Authorization: Bearer YOUR_ADMIN_JWT_TOKEN
+Content-Type: application/json
+
+{
+  "accountBalance": 10000
+}
+```
+
+#### Success Response (200 OK)
+
+```json
+{
+  "success": true,
+  "message": "Financial metrics updated successfully",
+  "data": {
+    "email": "user@example.com",
+    "totalInvestment": 8000,
+    "accountBalance": 10000,
+    "lockedValue": 3000,
+    "currentValue": 13000,
+    "lifetimeWithdrawals": 0,
+    "roi": 62.5,
+    "netGainLoss": 5000
+  },
+  "before": {
+    "accountBalance": 7500,
+    "currentValue": 10500,
+    "lockedValue": 3000,
+    "roi": 31.25
+  },
+  "portfolioAdjustments": [
+    {
+      "action": "add",
+      "tokenName": "USDT",
+      "tokenAmount": 2500,
+      "usdValue": 2500
+    }
+  ]
+}
+```
+
+#### Error Responses
+
+**400 — Locked mismatch when both fields sent:**
+```json
+{
+  "success": false,
+  "message": "currentValue must equal accountBalance + lockedValue. Update accountBalance alone, or set currentValue to accountBalance + lockedValue. To change locked capital, update active copytrade/stock values.",
+  "error": "CURRENT_VALUE_LOCKED_MISMATCH",
+  "data": {
+    "accountBalance": 10000,
+    "currentValue": 20000,
+    "lockedValue": 3000,
+    "expectedCurrentValue": 13000
+  }
+}
+```
+
+**400 — currentValue below locked:**
+```json
+{
+  "success": false,
+  "message": "currentValue cannot be less than locked capital in active trades/stocks",
+  "error": "CURRENT_VALUE_BELOW_LOCKED",
+  "data": {
+    "currentValue": 1000,
+    "lockedValue": 3000
+  }
+}
+```
+
+---
+
+**Alternate endpoint (same behavior):** admins can also send `accountBalance` / `currentValue` on:
+
+```
+PUT /api/v1/users/:id
+```
+
+That route applies the same portfolio-backed financial update, plus any other allowed profile fields in the same request.
 
 ---
 
@@ -354,7 +483,7 @@ const recalculateBalance = async (userId: string) => {
   
   if (result.success) {
     console.log('New balance:', result.data.newBalance);
-    return result.data.newBalance;
+    return result.data;
   }
   throw new Error(result.message);
 };
@@ -362,24 +491,61 @@ const recalculateBalance = async (userId: string) => {
 
 ---
 
+### Update Account Balance / Current Value
+
+```typescript
+// Preferred dedicated endpoint
+const updateUserFinancials = async (
+  userId: string,
+  payload: { accountBalance?: number; currentValue?: number }
+) => {
+  const token = localStorage.getItem('adminToken');
+
+  const response = await fetch(`/api/v1/portfolio/user/${userId}/financial`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const result = await response.json();
+  if (!result.success) {
+    throw Object.assign(new Error(result.message), {
+      code: result.error,
+      data: result.data
+    });
+  }
+  return result;
+};
+
+// Example: set available balance only (currentValue follows as balance + locked)
+await updateUserFinancials(userId, { accountBalance: 10000 });
+
+// Example: set total equity only (available becomes currentValue - locked)
+await updateUserFinancials(userId, { currentValue: 15000 });
+```
+
+---
+
 ## Important Notes
 
-1. **Balance Synchronization**: `accountBalance` should theoretically equal `portfolio.totalCurrentValue`, but may differ due to:
-   - Price fluctuations
-   - Timing differences
-   - Rounding differences
+1. **Balance Synchronization**: `accountBalance` equals liquid `portfolio.totalCurrentValue`. `currentValue` equals `accountBalance + lockedValue`.
 
-2. **Recalculation Use Cases**:
+2. **Admin edits are durable**: `PUT .../financial` adjusts holdings so subsequent sync/GET keeps the new figures.
+
+3. **Recalculation Use Cases**:
    - After significant price changes
    - After manual portfolio adjustments
    - To sync balance after system issues
    - Periodic maintenance
 
-3. **Live Prices**: Prices are fetched from CoinMarketCap API, so values may fluctuate.
+4. **Live Prices**: Prices are fetched from CoinMarketCap API, so values may fluctuate.
 
-4. **Price Availability**: If a token is not listed on CoinMarketCap, `currentPrice` will be `null` and `currentValue` will be `null`.
+5. **Price Availability**: If a token is not listed on CoinMarketCap, `currentPrice` will be `null` and `currentValue` will be `null`.
 
-5. **Empty Portfolio**: If user has no tokens, portfolio will have empty `holdings[]` array.
+6. **Empty Portfolio**: If user has no tokens, portfolio will have empty `holdings[]` array.
 
 ---
 
@@ -409,8 +575,15 @@ const recalculateBalance = async (userId: string) => {
 
 1. Admin notices balance discrepancy
 2. Admin calls `POST /api/v1/portfolio/user/:userId/recalculate`
-3. System syncs `accountBalance` with current portfolio value
+3. System syncs `accountBalance` / `currentValue` with portfolio + locked trades
 4. Admin verifies new balance
+
+### Editing Account Balance / Current Value
+
+1. Admin opens user financial editor
+2. Prefer `GET /api/v1/portfolio/user/:userId/financial-summary` to load `accountBalance`, `lockedValue`, `currentValue`
+3. Admin edits fields and calls `PUT /api/v1/portfolio/user/:userId/financial`
+4. UI should show `lockedValue` as read-only context: `currentValue = accountBalance + lockedValue`
 
 ---
 
@@ -419,7 +592,7 @@ const recalculateBalance = async (userId: string) => {
 ### Key Points for Admin Developers
 
 ✅ **User Portfolio Access**: View any user's portfolio  
-✅ **Balance Management**: Recalculate balances when needed  
+✅ **Balance Management**: Recalculate or directly set accountBalance / currentValue  
 ✅ **Token Information**: Check available tokens for withdrawals  
 ✅ **Live Prices**: Prices fetched live from CoinMarketCap  
 ✅ **Sync Capability**: Recalculate to sync balance with portfolio  
@@ -429,13 +602,16 @@ const recalculateBalance = async (userId: string) => {
 1. **GET `/users`** - Get all users with their portfolio information
 2. **GET `/user/:userId`** - Get user's complete portfolio
 3. **GET `/user/:userId/available-tokens`** - Get user's available tokens
-4. **POST `/user/:userId/recalculate`** - Recalculate user's account balance
+4. **POST `/user/:userId/recalculate`** - Recalculate user's account balance + equity
+5. **PUT `/user/:userId/financial`** - Set accountBalance and/or currentValue
+6. **GET `/user/:userId/financial-summary`** - Get equity summary (available, locked, current, ROI)
 
 ### Use Cases
 
 - **Dashboard Overview**: Get all users with portfolios for admin dashboard
 - **User Management**: View all users and their portfolio status at once
 - **User Support**: View user's portfolio to help with inquiries
+- **Manual Balance Edit**: Set available balance or total equity for a user
 - **Balance Verification**: Recalculate balance to verify accuracy
 - **Withdrawal Processing**: Check available tokens before processing withdrawals
 - **Reporting**: Generate portfolio reports for users

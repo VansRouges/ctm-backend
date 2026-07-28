@@ -11,11 +11,14 @@ Endpoints for admins to:
 - View any user's portfolio
 - Check user's available tokens
 - Recalculate user's account balance
+- **Set accountBalance and/or currentValue** (portfolio-backed)
 
 **Key Endpoints:**
 - `GET /api/v1/portfolio/user/:userId` - Get user's portfolio
 - `GET /api/v1/portfolio/user/:userId/available-tokens` - Get user's tokens
+- `GET /api/v1/portfolio/user/:userId/financial-summary` - Get equity summary
 - `POST /api/v1/portfolio/user/:userId/recalculate` - Recalculate balance
+- `PUT /api/v1/portfolio/user/:userId/financial` - Update accountBalance / currentValue
 
 ---
 
@@ -105,6 +108,29 @@ Use this when balance needs to be synced with portfolio:
 ```
 POST /api/v1/portfolio/user/:userId/recalculate
 ```
+
+### Editing Account Balance / Current Value
+
+Use this when an admin needs to manually set a user's available balance or total equity:
+
+```
+PUT /api/v1/portfolio/user/:userId/financial
+{
+  "accountBalance": 10000
+}
+```
+
+Or via the user update route (same financial logic):
+
+```
+PUT /api/v1/users/:id
+{
+  "accountBalance": 10000,
+  "currentValue": 13000
+}
+```
+
+See [PORTFOLIO_API.md](./PORTFOLIO_API.md) section **Update User Financial Metrics** for rules (`currentValue = accountBalance + lockedValue`).
 
 ---
 

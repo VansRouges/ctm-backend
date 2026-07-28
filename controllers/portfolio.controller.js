@@ -1,6 +1,9 @@
 // controllers/portfolio.controller.js
 import PortfolioService from '../services/portfolio.service.js';
 import FinancialSummaryService from '../services/financial-summary.service.js';
+import BalanceService from '../services/balance.service.js';
+import { createAuditLog } from '../utils/auditHelper.js';
+import { invalidateAuditCache } from './audit-log.controller.js';
 import logger from '../utils/logger.js';
 
 class PortfolioController {
@@ -272,6 +275,95 @@ class PortfolioController {
         message: error.message === 'USER_NOT_FOUND'
           ? 'User not found'
           : 'Failed to fetch financial summary',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Admin: set accountBalance and/or currentValue (portfolio-backed, durable through sync)
+   * PUT /api/v1/portfolio/user/:userId/financial
+   */
+  static async updateUserFinancialMetrics(req, res) {
+    try {
+      const { userId } = req.params;
+      const { accountBalance, currentValue } = req.body || {};
+
+      if (accountBalance === undefined && currentValue === undefined) {
+        return res.status(400).json({
+          success: false,
+          message: 'Provide accountBalance and/or currentValue',
+          error: 'NO_FINANCIAL_FIELDS'
+        });
+      }
+
+      logger.info('✏️ Admin updating user financial metrics', {
+        userId,
+        adminId: req.admin?.id,
+        accountBalance,
+        currentValue
+      });
+
+      const result = await BalanceService.adminUpdateFinancialMetrics(userId, {
+        accountBalance,
+        currentValue
+      });
+
+      await createAuditLog(req, res, {
+        action: 'user_financials_updated',
+        resourceType: 'user',
+        resourceId: String(userId),
+        resourceName: result.email,
+        changes: {
+          before: result.before,
+          after: result.after,
+          adjustments: result.adjustments
+        },
+        description: `Updated financial metrics for user: ${result.email}`
+      });
+      await invalidateAuditCache();
+
+      res.json({
+        success: true,
+        message: 'Financial metrics updated successfully',
+        data: {
+          ...result.after,
+          email: result.email
+        },
+        before: result.before,
+        portfolioAdjustments: result.adjustments
+      });
+    } catch (error) {
+      logger.error('❌ Error updating user financial metrics', {
+        error: error.message,
+        userId: req.params.userId,
+        adminId: req.admin?.id,
+        data: error.data
+      });
+
+      const financialErrors = new Set([
+        'NO_FINANCIAL_FIELDS',
+        'INVALID_FINANCIAL_VALUE',
+        'CURRENT_VALUE_BELOW_BALANCE',
+        'CURRENT_VALUE_LOCKED_MISMATCH',
+        'CURRENT_VALUE_BELOW_LOCKED',
+        'INSUFFICIENT_PORTFOLIO_VALUE',
+        'USER_NOT_FOUND'
+      ]);
+
+      if (financialErrors.has(error.message)) {
+        const status = error.message === 'USER_NOT_FOUND' ? 404 : 400;
+        return res.status(status).json({
+          success: false,
+          message: error.data?.message || error.message,
+          error: error.message,
+          data: error.data || undefined
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update financial metrics',
         error: error.message
       });
     }

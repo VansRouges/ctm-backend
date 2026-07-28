@@ -29,6 +29,9 @@ portfolioRouter.get('/user/:userId', requireAdminAuth, PortfolioController.getUs
 // GET /api/v1/portfolio/user/:userId/financial-summary - Admin: equity summary
 portfolioRouter.get('/user/:userId/financial-summary', requireAdminAuth, PortfolioController.getUserFinancialSummary);
 
+// PUT /api/v1/portfolio/user/:userId/financial - Admin: set accountBalance and/or currentValue
+portfolioRouter.put('/user/:userId/financial', requireAdminAuth, PortfolioController.updateUserFinancialMetrics);
+
 // GET /api/v1/portfolio/user/:userId/available-tokens - Admin: Get tokens user can withdraw
 portfolioRouter.get('/user/:userId/available-tokens', requireAdminAuth, PortfolioController.getAvailableTokens);
 
